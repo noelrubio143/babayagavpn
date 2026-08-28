@@ -135,7 +135,7 @@
   <header>
     <p class="eyebrow">// babayega vpn — config builder</p>
     <h1>Gumawa ng server config</h1>
-    <p class="sub">Parehong fields ng Custom Config screen ng Babayaga VPN app. Pag ni-save, direktang na-a-update ang config.html mo sa GitHub — kukunin ito ng app sa susunod na pindot ng "Fetch" icon (katabi ng bell) sa Servers screen.</p>
+    <p class="sub">Parehong fields ng Custom Config screen mo. Pag ni-save, direktang na-a-update ang config.html mo sa GitHub — kukunin ng app ito sa susunod na Fetch.</p>
   </header>
 
   <div class="panel">
@@ -147,7 +147,7 @@
       </div>
       <div class="field">
         <label>Repository</label>
-        <input id="ghRepo" placeholder="babayagavpn" value="babayagavpn">
+        <input id="ghRepo" placeholder="babayega-configs" value="babayegavpn">
       </div>
     </div>
     <div class="row">
@@ -204,16 +204,6 @@
 
   <div class="panel">
     <p class="panel-title"><span class="dot"></span>2. Kasalukuyang mga config</p>
-    <div class="row">
-      <div class="field">
-        <label>Version (auto-increment tuwing Save, para makita ng app na may bago)</label>
-        <input id="cfgVersion" placeholder="1" readonly>
-      </div>
-      <div class="field">
-        <label>ReleaseNotes (lalabas sa "Notification" bell ng app)</label>
-        <input id="cfgReleaseNotes" placeholder="Updated server list">
-      </div>
-    </div>
     <div id="serverList" class="server-list">
       <p class="empty">Mag-connect muna sa itaas para makita ang listahan.</p>
     </div>
@@ -282,16 +272,14 @@ const PROTO = {
   udp:         { label: 'UDP',          serverType: 6, fields: ['host','user'] },
   slowdns:     { label: 'SlowDNS',      serverType: 5, fields: ['host','user','slowdns'] },
   slipstream:  { label: 'Slipstream',   serverType: 8, fields: ['slipstream','user'] },
-  v2ray_link:  { label: 'Xray (link)',  serverType: 7, fields: ['v2raylink'] },
-  v2ray_json:  { label: 'Xray (JSON)',  serverType: 7, fields: ['v2rayjson'] },
+  v2ray_link:  { label: 'Xray (link)',  fields: ['v2raylink'] },
+  v2ray_json:  { label: 'Xray (JSON)',  fields: ['v2rayjson'] },
 };
 
 let currentProto = 'ssh_direct';
 let editingName = null;   // non-null when editing an existing entry
 let cachedSha = null;     // sha of config.html, needed to push updates
-let cachedEntries = [];   // parsed Servers[] currently in the file
-let cachedVersion = 1;    // Version field the app compares against its own
-let cachedReleaseNotes = 'Updated server list'; // ReleaseNotes field, shown in the app's bell/Notification dialog
+let cachedEntries = [];   // parsed entries currently in the file
 
 function el(id) { return document.getElementById(id); }
 
@@ -299,10 +287,9 @@ function el(id) { return document.getElementById(id); }
 // AES encrypt/decrypt + custom obfuscation, mirroring AESCrypt.java /
 // aescrypt_config.py exactly (same PASSWORD, same blank IV, same
 // substitution alphabet) so the "babayega-configs" block written here
-// is byte-for-byte what ConfigUtil.PASSWORD / ConfigUpdate expect to
-// decrypt on the app side (see ConfigUtil.java / AESCrypt.java).
+// is byte-for-byte what RemoteConfigFetcher.java expects to decrypt.
 // ---------------------------------------------------------------------
-const CONFIG_PASSWORD = 'babayagavpn'; // == ConfigUtil.PASSWORD in the app
+const CONFIG_PASSWORD = 'hot';
 // Decoded from the same base64 blob used in AESCrypt.java's jaTest /
 // aescrypt_config.py's ALPHABET: "▙▚▛▜▝▞▟▃▄▅▆▇█▉▊▐"
 const CONFIG_ALPHABET = ['\u2599','\u259a','\u259b','\u259c','\u259d','\u259e','\u259f',
@@ -573,12 +560,16 @@ function fieldBlock(fieldsNeeded) {
   if (has('slipstream')) {
     parts.push(`
       <div class="row">
-        <div class="field"><label>ServerHost (real SSH backend, tinatago ng tunnel na ito)</label><input id="fHost" placeholder="123.45.67.89"></div>
-        <div class="field"><label>ServerPort</label><input id="fPort" placeholder="22"></div>
+        <div class="field"><label>Domain</label><input id="fDomain" placeholder="yourdomain.com"></div>
+        <div class="field"><label>Resolver</label><input id="fResolver" placeholder="8.8.8.8"></div>
       </div>
       <div class="row">
-        <div class="field"><label>Domain</label><input id="fDomain" placeholder="yourdomain.com"></div>
-        <div class="field"><label>Resolver</label><input id="fResolver" placeholder="1.1.1.1:53"></div>
+        <div class="field"><label>Authoritative</label><input id="fAuth" placeholder="ns.yourdomain.com"></div>
+        <div class="field"><label>Cert</label><input id="fCert" placeholder=""></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Congestion</label><input id="fCongestion" placeholder=""></div>
+        <div class="field"><label>KeepAlive</label><input id="fKeepAlive" placeholder=""></div>
       </div>`);
   }
   if (has('v2raylink')) {
@@ -603,6 +594,16 @@ function renderFields() {
   const showOverrides = !currentProto.startsWith('v2ray');
   el('optionalOverridesRow').style.display = showOverrides ? 'grid' : 'none';
   el('optionalOverridesRow2').style.display = showOverrides ? 'grid' : 'none';
+
+  // ProxyHost/ProxyPort are only truly optional for protocols other than
+  // SSH Proxy -- the app hard-blocks SSH Proxy connections with an
+  // "Invalid proxy" error if these are left empty (LaunchVpn.java), so
+  // make that obvious here instead of only after a failed push+connect.
+  const isSshProxy = currentProto === 'ssh_proxy';
+  const proxyHostLabel = el('optionalOverridesRow').querySelector('label');
+  const proxyPortLabel = el('optionalOverridesRow').querySelectorAll('label')[1];
+  if (proxyHostLabel) proxyHostLabel.textContent = isSshProxy ? 'ProxyHost (required para sa SSH Proxy)' : 'ProxyHost (optional)';
+  if (proxyPortLabel) proxyPortLabel.textContent = isSshProxy ? 'ProxyPort (required para sa SSH Proxy)' : 'ProxyPort (optional)';
 }
 
 function clearForm() {
@@ -644,28 +645,20 @@ function ghConfig() {
 
 async function extractEntries(html) {
   const match = html.match(/<script[^>]*id=["']babayega-configs["'][^>]*>([\s\S]*?)<\/script>/i);
-  const block = match ? match[1].trim() : html.trim();
+  if (!match) return [];
+  const block = match[1].trim();
   if (!block) return [];
-
-  let parsed;
+  // Current format: block is the AES-encrypted + obfuscated string (same
+  // as ConfigUtil.PASSWORD in the app). Try that first.
   try {
     const json = await configDecrypt(block);
-    parsed = JSON.parse(json);
+    return JSON.parse(json);
   } catch (e) {
-    // Fallback: block wasn't encrypted (e.g. an old plain-JSON file). The
-    // next Save will rewrite it in the encrypted format either way.
-    try { parsed = JSON.parse(block); } catch (e2) { return []; }
+    // Fallback for an older config.html that still has plain JSON in the
+    // block (e.g. one saved before this builder started encrypting). The
+    // next Save will rewrite it in the encrypted format.
+    try { return JSON.parse(block); } catch (e2) { return []; }
   }
-
-  // New shape: {Version, ReleaseNotes, Servers:[...]} — same object
-  // ConfigUtil.getJSONConfig() works with. Old shape (from an earlier
-  // version of this builder): a bare array of entries.
-  if (Array.isArray(parsed)) {
-    return parsed;
-  }
-  cachedVersion = typeof parsed.Version === 'number' ? parsed.Version : (parseInt(parsed.Version, 10) || 1);
-  cachedReleaseNotes = parsed.ReleaseNotes || cachedReleaseNotes;
-  return Array.isArray(parsed.Servers) ? parsed.Servers : [];
 }
 
 function protoKeyForEntry(entry) {
@@ -719,7 +712,7 @@ function editEntry(encodedName) {
   el('fProxyHost').value = entry.ProxyHost || '';
   el('fProxyPort').value = entry.ProxyPort || '';
   el('fPayload').value = entry.Payload || '';
-  el('fSni').value = entry.Sni || '';
+  el('fSni').value = entry.SNI || '';
 
   if (el('fHost')) el('fHost').value = entry.ServerHost || '';
   if (el('fPort')) el('fPort').value = entry.ServerPort || '';
@@ -730,6 +723,10 @@ function editEntry(encodedName) {
   if (el('fPubKey')) el('fPubKey').value = entry.PublicKey || '';
   if (el('fDomain')) el('fDomain').value = entry.Domain || '';
   if (el('fResolver')) el('fResolver').value = entry.Resolver || '';
+  if (el('fAuth')) el('fAuth').value = entry.Authoritative || '';
+  if (el('fCert')) el('fCert').value = entry.Cert || '';
+  if (el('fCongestion')) el('fCongestion').value = entry.Congestion || '';
+  if (el('fKeepAlive')) el('fKeepAlive').value = entry.KeepAlive || '';
   if (el('fV2rayLink')) el('fV2rayLink').value = entry.v2ray || '';
   if (el('fV2rayJson')) el('fV2rayJson').value = entry.ConfigJson || '';
 
@@ -740,198 +737,8 @@ async function deleteEntry(encodedName) {
   const name = decodeURIComponent(encodedName);
   if (!confirm('Delete "' + name + '"? Hindi na mababawi ito.')) return;
   cachedEntries = cachedEntries.filter(e => e.Name !== name);
-  cachedVersion = (parseInt(cachedVersion, 10) || 0) + 1;
-  el('cfgVersion').value = cachedVersion;
   await pushToGithub('Delete config: ' + name);
   renderServerList();
-}
-
-// ---------------------------------------------------------------------
-// vless:// / vmess:// / trojan:// -> full V2Ray/Xray JSON converter.
-// The app's V2Utilities.parseV2rayJsonFile() only ever reads a full JSON
-// config (inbounds+outbounds) -- it has no code to parse raw share links.
-// So instead of saving the link verbatim (which the app can never use),
-// we convert it here and save it as ConfigJson, same as the "Xray (JSON)"
-// tab -- both paths now produce something the app can actually connect
-// with.
-// ---------------------------------------------------------------------
-function buildStreamSettings(params, fallbackHost) {
-  const network = (params.get('type') || 'tcp').toLowerCase();
-  const ss = { network };
-  const path = params.get('path') ? decodeURIComponent(params.get('path')) : '/';
-  const host = params.get('host') || fallbackHost || '';
-
-  if (network === 'ws') {
-    ss.wsSettings = { path, headers: host ? { Host: host } : {} };
-  } else if (network === 'grpc') {
-    ss.grpcSettings = { serviceName: params.get('serviceName') || '', multiMode: params.get('mode') === 'multi' };
-  } else if (network === 'h2' || network === 'http') {
-    ss.httpSettings = { path, host: host ? [host] : [] };
-  } else if (network === 'quic') {
-    ss.quicSettings = { security: params.get('quicSecurity') || 'none', key: params.get('key') || '', header: { type: params.get('headerType') || 'none' } };
-  } else if (network === 'tcp' && (params.get('headerType') || '') === 'http') {
-    ss.tcpSettings = { header: { type: 'http', request: { path: [path], headers: host ? { Host: [host] } : {} } } };
-  }
-
-  const security = (params.get('security') || 'none').toLowerCase();
-  ss.security = security;
-  if (security === 'tls') {
-    ss.tlsSettings = {
-      serverName: params.get('sni') || host || '',
-      allowInsecure: params.get('allowInsecure') === '1',
-      fingerprint: params.get('fp') || '',
-    };
-    const alpn = params.get('alpn');
-    if (alpn) ss.tlsSettings.alpn = alpn.split(',');
-  } else if (security === 'reality') {
-    ss.realitySettings = {
-      serverName: params.get('sni') || '',
-      fingerprint: params.get('fp') || '',
-      publicKey: params.get('pbk') || '',
-      shortId: params.get('sid') || '',
-      spiderX: params.get('spx') || '',
-    };
-  }
-  return ss;
-}
-
-function wrapOutboundIntoFullConfig(outbound) {
-  return {
-    log: { loglevel: 'warning' },
-    inbounds: [
-      { tag: 'socks', port: 10808, listen: '127.0.0.1', protocol: 'socks', settings: { auth: 'noauth', udp: true } },
-      { tag: 'http', port: 10809, listen: '127.0.0.1', protocol: 'http' },
-    ],
-    outbounds: [
-      { ...outbound, tag: 'proxy' },
-      { protocol: 'freedom', tag: 'direct' },
-      { protocol: 'blackhole', tag: 'block' },
-    ],
-  };
-}
-
-function parseVlessLink(link) {
-  const u = new URL(link);
-  const uuid = decodeURIComponent(u.username);
-  const address = u.hostname;
-  const port = Number(u.port);
-  if (!uuid || !address || !port) throw new Error('Hindi kumpleto ang vless link (kulang ang uuid/host/port).');
-  const outbound = {
-    protocol: 'vless',
-    settings: {
-      vnext: [{
-        address, port,
-        users: [{ id: uuid, encryption: u.searchParams.get('encryption') || 'none', flow: u.searchParams.get('flow') || undefined }],
-      }],
-    },
-    streamSettings: buildStreamSettings(u.searchParams, address),
-  };
-  return wrapOutboundIntoFullConfig(outbound);
-}
-
-function parseVmessLink(link) {
-  const b64 = link.replace(/^vmess:\/\//i, '');
-  let obj;
-  try {
-    obj = JSON.parse(decodeURIComponent(escape(atob(b64))));
-  } catch (e) {
-    throw new Error('Hindi ma-decode ang vmess link (dapat base64 JSON, standard v2rayN format).');
-  }
-  const address = obj.add, port = Number(obj.port);
-  if (!obj.id || !address || !port) throw new Error('Hindi kumpleto ang vmess config (kulang ang id/add/port).');
-  const network = (obj.net || 'tcp').toLowerCase();
-  const ss = { network };
-  const path = obj.path || '/';
-  if (network === 'ws') {
-    ss.wsSettings = { path, headers: obj.host ? { Host: obj.host } : {} };
-  } else if (network === 'grpc') {
-    ss.grpcSettings = { serviceName: obj.path || '', multiMode: false };
-  } else if (network === 'h2') {
-    ss.httpSettings = { path, host: obj.host ? [obj.host] : [] };
-  } else if (network === 'tcp' && obj.type === 'http') {
-    ss.tcpSettings = { header: { type: 'http', request: { path: [path], headers: obj.host ? { Host: [obj.host] } : {} } } };
-  }
-  ss.security = obj.tls === 'tls' ? 'tls' : 'none';
-  if (ss.security === 'tls') {
-    ss.tlsSettings = { serverName: obj.sni || obj.host || '', fingerprint: obj.fp || '' };
-    if (obj.alpn) ss.tlsSettings.alpn = String(obj.alpn).split(',');
-  }
-  const outbound = {
-    protocol: 'vmess',
-    settings: { vnext: [{ address, port, users: [{ id: obj.id, alterId: Number(obj.aid || 0), security: 'auto' }] }] },
-    streamSettings: ss,
-  };
-  return wrapOutboundIntoFullConfig(outbound);
-}
-
-function parseTrojanLink(link) {
-  const u = new URL(link);
-  const password = decodeURIComponent(u.username);
-  const address = u.hostname;
-  const port = Number(u.port);
-  if (!password || !address || !port) throw new Error('Hindi kumpleto ang trojan link (kulang ang password/host/port).');
-  const outbound = {
-    protocol: 'trojan',
-    settings: { servers: [{ address, port, password }] },
-    streamSettings: buildStreamSettings(u.searchParams, address),
-  };
-  return wrapOutboundIntoFullConfig(outbound);
-}
-
-function parseShadowsocksLink(link) {
-  // Parsed manually (not via `new URL()`) because the base64 userinfo can
-  // contain '/', '+', '=' which the WHATWG URL parser doesn't handle
-  // reliably in the userinfo position.
-  const rest = link.replace(/^ss:\/\//i, '');
-  const hashIdx = rest.indexOf('#');
-  const withoutRemark = hashIdx >= 0 ? rest.slice(0, hashIdx) : rest;
-  const atIdx = withoutRemark.lastIndexOf('@');
-  if (atIdx < 0) throw new Error('Hindi kumpleto ang shadowsocks link (walang @host:port).');
-  let userinfo = withoutRemark.slice(0, atIdx);
-  let hostport = withoutRemark.slice(atIdx + 1);
-  const endIdx = hostport.search(/[/?]/);
-  if (endIdx >= 0) hostport = hostport.slice(0, endIdx);
-
-  let method, password;
-  if (userinfo.includes(':')) {
-    // ss://method:password@host:port (plain, possibly percent-encoded)
-    const idx = userinfo.indexOf(':');
-    method = decodeURIComponent(userinfo.slice(0, idx));
-    password = decodeURIComponent(userinfo.slice(idx + 1));
-  } else {
-    // ss://BASE64(method:password)@host:port
-    const b64 = decodeURIComponent(userinfo).replace(/-/g, '+').replace(/_/g, '/');
-    let decoded;
-    try {
-      decoded = atob(b64);
-    } catch (e) {
-      throw new Error('Hindi ma-decode ang shadowsocks userinfo (invalid base64).');
-    }
-    const idx = decoded.indexOf(':');
-    if (idx < 0) throw new Error('Hindi kumpleto ang shadowsocks credentials pagkatapos i-decode.');
-    method = decoded.slice(0, idx);
-    password = decoded.slice(idx + 1);
-  }
-
-  const portIdx = hostport.lastIndexOf(':');
-  if (portIdx < 0) throw new Error('Kulang ang port sa shadowsocks link.');
-  const address = hostport.slice(0, portIdx);
-  const port = Number(hostport.slice(portIdx + 1));
-  if (!method || !password || !address || !port) throw new Error('Hindi kumpleto ang shadowsocks link.');
-  const outbound = {
-    protocol: 'shadowsocks',
-    settings: { servers: [{ address, port, method, password }] },
-  };
-  return wrapOutboundIntoFullConfig(outbound);
-}
-
-function linkToV2rayConfig(link) {
-  const scheme = link.trim().split('://')[0].toLowerCase();
-  if (scheme === 'vless') return parseVlessLink(link);
-  if (scheme === 'vmess') return parseVmessLink(link);
-  if (scheme === 'trojan') return parseTrojanLink(link);
-  if (scheme === 'ss') return parseShadowsocksLink(link);
-  throw new Error('Hindi supported na protocol: ' + scheme + '://  (vless, vmess, trojan, ss lang ang supported).');
 }
 
 function buildEntryFromForm() {
@@ -947,65 +754,31 @@ function buildEntryFromForm() {
 
   const put = (k, v) => { if (v !== undefined && v !== '') entry[k] = v; };
 
-  // Normalizes a Slipstream resolver address into the "host:port" form
-  // slipstream-client expects. Bare IPv6 (e.g. "2001:4860:4860::8888",
-  // pasted without brackets) needs to become "[2001:4860:4860::8888]:53" --
-  // the binary rejects unbracketed IPv6 with "Invalid IPv6 address format
-  // (missing closing bracket)". IPv4/hostnames only ever have one colon
-  // (host:port) so they're left alone, just adding :53 if no port given.
-  // (SlipstreamClientManager.java does this same normalization app-side too,
-  // as a safety net -- this just makes what gets saved already correct.)
-  const normalizeResolver = (resolver) => {
-    const r = (resolver || '').trim();
-    if (!r) return r;
-    if (r.startsWith('[')) return r.includes(']:') ? r : r + ':53';
-    const colonCount = (r.match(/:/g) || []).length;
-    if (colonCount > 1) return '[' + r + ']:53';
-    return colonCount === 1 ? r : r + ':53';
-  };
-
   if (currentProto === 'v2ray_link') {
     const link = el('fV2rayLink').value.trim();
     if (!link) throw new Error('Kailangan ng v2ray link.');
-    // Convert to a full JSON config -- the app has no code to parse raw
-    // share links, only full V2Ray/Xray JSON (see ConfigJson below). This
-    // keeps the "paste a link" workflow while saving something the app
-    // can actually connect with.
-    let fullConfig;
-    try {
-      fullConfig = linkToV2rayConfig(link);
-    } catch (e) {
-      throw new Error('Hindi ma-convert ang link: ' + e.message);
-    }
-    entry.ConfigJson = JSON.stringify(fullConfig);
-    entry.serverType = PROTO.v2ray_json.serverType;
-    entry.tunnelType = PROTO.v2ray_json.serverType;
+    entry.v2ray = link;
     return entry;
   }
   if (currentProto === 'v2ray_json') {
     const json = el('fV2rayJson').value.trim();
     if (!json) throw new Error('Kailangan ng ConfigJson.');
     entry.ConfigJson = json;
-    entry.serverType = PROTO.v2ray_json.serverType;
-    entry.tunnelType = PROTO.v2ray_json.serverType;
     return entry;
   }
 
   const p = PROTO[currentProto];
-  if (p.serverType !== undefined) {
-    entry.serverType = p.serverType;
-    entry.tunnelType = p.serverType; // matches ConfigUtil's Servers[] shape (both keys present)
-  }
+  if (p.serverType !== undefined) entry.serverType = p.serverType;
 
   if (currentProto === 'slipstream') {
     const domain = el('fDomain').value.trim();
     if (!domain) throw new Error('Kailangan ng Domain.');
-    const host = el('fHost').value.trim();
-    if (!host) throw new Error('Kailangan ng ServerHost (yung real SSH server na ita-tunnel).');
     entry.Domain = domain;
-    entry.ServerHost = host;
-    put('ServerPort', el('fPort').value.trim());
-    put('Resolver', normalizeResolver(el('fResolver').value));
+    put('Resolver', el('fResolver').value.trim());
+    put('Authoritative', el('fAuth').value.trim());
+    put('Cert', el('fCert').value.trim());
+    put('Congestion', el('fCongestion').value.trim());
+    put('KeepAlive', el('fKeepAlive').value.trim());
     put('Username', el('fUser').value.trim());
     put('Password', el('fPass').value.trim());
   } else {
@@ -1025,20 +798,24 @@ function buildEntryFromForm() {
   put('ProxyHost', el('fProxyHost').value.trim());
   put('ProxyPort', el('fProxyPort').value.trim());
   put('Payload', el('fPayload').value.trim());
-  put('Sni', el('fSni').value.trim());
+  put('SNI', el('fSni').value.trim());
+
+  // SSH Proxy needs a real intermediary proxy host/port -- the app hard-
+  // blocks the connection with an "Invalid proxy" toast before it even
+  // tries to connect if either of these is empty for this protocol
+  // specifically (see LaunchVpn.java's onActivityResult check). Catching
+  // it here, instead of only in the app after the config is already
+  // pushed, saves a round trip of "why won't this connect".
+  if (currentProto === 'ssh_proxy') {
+    if (!entry.ProxyHost) throw new Error('Kailangan ang ProxyHost para sa SSH Proxy -- hindi ito talaga optional para sa protocol na ito, kahit "optional" ang label. Kung walang laman ito, hindi susubukan ng app ang connection.');
+    if (!entry.ProxyPort) throw new Error('Kailangan ang ProxyPort para sa SSH Proxy -- hindi ito talaga optional para sa protocol na ito, kahit "optional" ang label. Kung walang laman ito, hindi susubukan ng app ang connection.');
+  }
 
   return entry;
 }
 
 async function rebuildHtml(entries) {
-  // Matches ConfigUtil.getJSONConfig()'s expected shape: a top-level object
-  // with Version / ReleaseNotes / Servers, not a bare array.
-  const fullConfig = {
-    Version: cachedVersion,
-    ReleaseNotes: cachedReleaseNotes,
-    Servers: entries,
-  };
-  const json = JSON.stringify(fullConfig);
+  const json = JSON.stringify(entries);
   const encrypted = await configEncrypt(json);
   return `<!DOCTYPE html>
 <html>
@@ -1068,10 +845,6 @@ async function loadServerList() {
     if (res.status === 404) {
       cachedSha = null;
       cachedEntries = [];
-      cachedVersion = 1;
-      cachedReleaseNotes = 'Updated server list';
-      el('cfgVersion').value = cachedVersion;
-      el('cfgReleaseNotes').value = cachedReleaseNotes;
       renderServerList();
       showStatus('Wala pang file na "' + cfg.path + '" sa repo mo. Gagawa ng bago pag Save ka.', 'info');
       return;
@@ -1081,8 +854,6 @@ async function loadServerList() {
     cachedSha = data.sha;
     const html = b64DecodeUtf8(data.content.replace(/\n/g, ''));
     cachedEntries = await extractEntries(html);
-    el('cfgVersion').value = cachedVersion;
-    el('cfgReleaseNotes').value = cachedReleaseNotes;
     renderServerList();
     showStatus('Naka-connect. ' + cachedEntries.length + ' config(s) na kasalukuyang naka-save.', 'ok');
   } catch (e) {
@@ -1134,14 +905,10 @@ async function saveConfig() {
     const idx = cachedEntries.findIndex(e => e.Name === entry.Name);
     if (idx >= 0) cachedEntries[idx] = entry; else cachedEntries.push(entry);
 
-    cachedVersion = (parseInt(cachedVersion, 10) || 0) + 1;
-    cachedReleaseNotes = el('cfgReleaseNotes').value.trim() || cachedReleaseNotes;
-    el('cfgVersion').value = cachedVersion;
-
     await pushToGithub((editingName ? 'Update' : 'Add') + ' config: ' + entry.Name);
     renderServerList();
     clearForm();
-    showStatus('Na-save! Version ' + cachedVersion + '. Kunin na lang ng "Fetch" sa app mo. (' + cachedEntries.length + ' total)', 'ok');
+    showStatus('Na-save! Kunin na lang ng "Fetch Configs" sa app mo. (' + cachedEntries.length + ' total)', 'ok');
   } catch (e) {
     showStatus('Save failed: ' + e.message, 'err');
   }
@@ -1150,8 +917,6 @@ async function saveConfig() {
 renderTabs();
 renderFields();
 refreshVaultUI();
-el('cfgVersion').value = cachedVersion;
-el('cfgReleaseNotes').value = cachedReleaseNotes;
 if (getSavedVault()) el('vaultPass').focus();
 </script>
 </body>
