@@ -1,0 +1,4 @@
+# BABAYAGA VPN - Ads.txt
+# AdMob Publisher ID: ca-app-pub-6566191416931736~5570614734
+
+google.com, ca-app-pub-6566191416931736, RESELLER, f08c47fec0942fa0
