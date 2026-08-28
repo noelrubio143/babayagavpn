@@ -573,6 +573,10 @@ function fieldBlock(fieldsNeeded) {
   if (has('slipstream')) {
     parts.push(`
       <div class="row">
+        <div class="field"><label>ServerHost (real SSH backend, tinatago ng tunnel na ito)</label><input id="fHost" placeholder="123.45.67.89"></div>
+        <div class="field"><label>ServerPort</label><input id="fPort" placeholder="22"></div>
+      </div>
+      <div class="row">
         <div class="field"><label>Domain</label><input id="fDomain" placeholder="yourdomain.com"></div>
         <div class="field"><label>Resolver</label><input id="fResolver" placeholder="8.8.8.8"></div>
       </div>
@@ -754,6 +758,194 @@ async function deleteEntry(encodedName) {
   renderServerList();
 }
 
+// ---------------------------------------------------------------------
+// vless:// / vmess:// / trojan:// -> full V2Ray/Xray JSON converter.
+// The app's V2Utilities.parseV2rayJsonFile() only ever reads a full JSON
+// config (inbounds+outbounds) -- it has no code to parse raw share links.
+// So instead of saving the link verbatim (which the app can never use),
+// we convert it here and save it as ConfigJson, same as the "Xray (JSON)"
+// tab -- both paths now produce something the app can actually connect
+// with.
+// ---------------------------------------------------------------------
+function buildStreamSettings(params, fallbackHost) {
+  const network = (params.get('type') || 'tcp').toLowerCase();
+  const ss = { network };
+  const path = params.get('path') ? decodeURIComponent(params.get('path')) : '/';
+  const host = params.get('host') || fallbackHost || '';
+
+  if (network === 'ws') {
+    ss.wsSettings = { path, headers: host ? { Host: host } : {} };
+  } else if (network === 'grpc') {
+    ss.grpcSettings = { serviceName: params.get('serviceName') || '', multiMode: params.get('mode') === 'multi' };
+  } else if (network === 'h2' || network === 'http') {
+    ss.httpSettings = { path, host: host ? [host] : [] };
+  } else if (network === 'quic') {
+    ss.quicSettings = { security: params.get('quicSecurity') || 'none', key: params.get('key') || '', header: { type: params.get('headerType') || 'none' } };
+  } else if (network === 'tcp' && (params.get('headerType') || '') === 'http') {
+    ss.tcpSettings = { header: { type: 'http', request: { path: [path], headers: host ? { Host: [host] } : {} } } };
+  }
+
+  const security = (params.get('security') || 'none').toLowerCase();
+  ss.security = security;
+  if (security === 'tls') {
+    ss.tlsSettings = {
+      serverName: params.get('sni') || host || '',
+      allowInsecure: params.get('allowInsecure') === '1',
+      fingerprint: params.get('fp') || '',
+    };
+    const alpn = params.get('alpn');
+    if (alpn) ss.tlsSettings.alpn = alpn.split(',');
+  } else if (security === 'reality') {
+    ss.realitySettings = {
+      serverName: params.get('sni') || '',
+      fingerprint: params.get('fp') || '',
+      publicKey: params.get('pbk') || '',
+      shortId: params.get('sid') || '',
+      spiderX: params.get('spx') || '',
+    };
+  }
+  return ss;
+}
+
+function wrapOutboundIntoFullConfig(outbound) {
+  return {
+    log: { loglevel: 'warning' },
+    inbounds: [
+      { tag: 'socks', port: 10808, listen: '127.0.0.1', protocol: 'socks', settings: { auth: 'noauth', udp: true } },
+      { tag: 'http', port: 10809, listen: '127.0.0.1', protocol: 'http' },
+    ],
+    outbounds: [
+      { ...outbound, tag: 'proxy' },
+      { protocol: 'freedom', tag: 'direct' },
+      { protocol: 'blackhole', tag: 'block' },
+    ],
+  };
+}
+
+function parseVlessLink(link) {
+  const u = new URL(link);
+  const uuid = decodeURIComponent(u.username);
+  const address = u.hostname;
+  const port = Number(u.port);
+  if (!uuid || !address || !port) throw new Error('Hindi kumpleto ang vless link (kulang ang uuid/host/port).');
+  const outbound = {
+    protocol: 'vless',
+    settings: {
+      vnext: [{
+        address, port,
+        users: [{ id: uuid, encryption: u.searchParams.get('encryption') || 'none', flow: u.searchParams.get('flow') || undefined }],
+      }],
+    },
+    streamSettings: buildStreamSettings(u.searchParams, address),
+  };
+  return wrapOutboundIntoFullConfig(outbound);
+}
+
+function parseVmessLink(link) {
+  const b64 = link.replace(/^vmess:\/\//i, '');
+  let obj;
+  try {
+    obj = JSON.parse(decodeURIComponent(escape(atob(b64))));
+  } catch (e) {
+    throw new Error('Hindi ma-decode ang vmess link (dapat base64 JSON, standard v2rayN format).');
+  }
+  const address = obj.add, port = Number(obj.port);
+  if (!obj.id || !address || !port) throw new Error('Hindi kumpleto ang vmess config (kulang ang id/add/port).');
+  const network = (obj.net || 'tcp').toLowerCase();
+  const ss = { network };
+  const path = obj.path || '/';
+  if (network === 'ws') {
+    ss.wsSettings = { path, headers: obj.host ? { Host: obj.host } : {} };
+  } else if (network === 'grpc') {
+    ss.grpcSettings = { serviceName: obj.path || '', multiMode: false };
+  } else if (network === 'h2') {
+    ss.httpSettings = { path, host: obj.host ? [obj.host] : [] };
+  } else if (network === 'tcp' && obj.type === 'http') {
+    ss.tcpSettings = { header: { type: 'http', request: { path: [path], headers: obj.host ? { Host: [obj.host] } : {} } } };
+  }
+  ss.security = obj.tls === 'tls' ? 'tls' : 'none';
+  if (ss.security === 'tls') {
+    ss.tlsSettings = { serverName: obj.sni || obj.host || '', fingerprint: obj.fp || '' };
+    if (obj.alpn) ss.tlsSettings.alpn = String(obj.alpn).split(',');
+  }
+  const outbound = {
+    protocol: 'vmess',
+    settings: { vnext: [{ address, port, users: [{ id: obj.id, alterId: Number(obj.aid || 0), security: 'auto' }] }] },
+    streamSettings: ss,
+  };
+  return wrapOutboundIntoFullConfig(outbound);
+}
+
+function parseTrojanLink(link) {
+  const u = new URL(link);
+  const password = decodeURIComponent(u.username);
+  const address = u.hostname;
+  const port = Number(u.port);
+  if (!password || !address || !port) throw new Error('Hindi kumpleto ang trojan link (kulang ang password/host/port).');
+  const outbound = {
+    protocol: 'trojan',
+    settings: { servers: [{ address, port, password }] },
+    streamSettings: buildStreamSettings(u.searchParams, address),
+  };
+  return wrapOutboundIntoFullConfig(outbound);
+}
+
+function parseShadowsocksLink(link) {
+  // Parsed manually (not via `new URL()`) because the base64 userinfo can
+  // contain '/', '+', '=' which the WHATWG URL parser doesn't handle
+  // reliably in the userinfo position.
+  const rest = link.replace(/^ss:\/\//i, '');
+  const hashIdx = rest.indexOf('#');
+  const withoutRemark = hashIdx >= 0 ? rest.slice(0, hashIdx) : rest;
+  const atIdx = withoutRemark.lastIndexOf('@');
+  if (atIdx < 0) throw new Error('Hindi kumpleto ang shadowsocks link (walang @host:port).');
+  let userinfo = withoutRemark.slice(0, atIdx);
+  let hostport = withoutRemark.slice(atIdx + 1);
+  const endIdx = hostport.search(/[/?]/);
+  if (endIdx >= 0) hostport = hostport.slice(0, endIdx);
+
+  let method, password;
+  if (userinfo.includes(':')) {
+    // ss://method:password@host:port (plain, possibly percent-encoded)
+    const idx = userinfo.indexOf(':');
+    method = decodeURIComponent(userinfo.slice(0, idx));
+    password = decodeURIComponent(userinfo.slice(idx + 1));
+  } else {
+    // ss://BASE64(method:password)@host:port
+    const b64 = decodeURIComponent(userinfo).replace(/-/g, '+').replace(/_/g, '/');
+    let decoded;
+    try {
+      decoded = atob(b64);
+    } catch (e) {
+      throw new Error('Hindi ma-decode ang shadowsocks userinfo (invalid base64).');
+    }
+    const idx = decoded.indexOf(':');
+    if (idx < 0) throw new Error('Hindi kumpleto ang shadowsocks credentials pagkatapos i-decode.');
+    method = decoded.slice(0, idx);
+    password = decoded.slice(idx + 1);
+  }
+
+  const portIdx = hostport.lastIndexOf(':');
+  if (portIdx < 0) throw new Error('Kulang ang port sa shadowsocks link.');
+  const address = hostport.slice(0, portIdx);
+  const port = Number(hostport.slice(portIdx + 1));
+  if (!method || !password || !address || !port) throw new Error('Hindi kumpleto ang shadowsocks link.');
+  const outbound = {
+    protocol: 'shadowsocks',
+    settings: { servers: [{ address, port, method, password }] },
+  };
+  return wrapOutboundIntoFullConfig(outbound);
+}
+
+function linkToV2rayConfig(link) {
+  const scheme = link.trim().split('://')[0].toLowerCase();
+  if (scheme === 'vless') return parseVlessLink(link);
+  if (scheme === 'vmess') return parseVmessLink(link);
+  if (scheme === 'trojan') return parseTrojanLink(link);
+  if (scheme === 'ss') return parseShadowsocksLink(link);
+  throw new Error('Hindi supported na protocol: ' + scheme + '://  (vless, vmess, trojan, ss lang ang supported).');
+}
+
 function buildEntryFromForm() {
   const name = el('fName').value.trim();
   if (!name) { throw new Error('Kailangan ng Name.'); }
@@ -770,9 +962,19 @@ function buildEntryFromForm() {
   if (currentProto === 'v2ray_link') {
     const link = el('fV2rayLink').value.trim();
     if (!link) throw new Error('Kailangan ng v2ray link.');
-    entry.v2ray = link;
-    entry.serverType = PROTO.v2ray_link.serverType;
-    entry.tunnelType = PROTO.v2ray_link.serverType;
+    // Convert to a full JSON config -- the app has no code to parse raw
+    // share links, only full V2Ray/Xray JSON (see ConfigJson below). This
+    // keeps the "paste a link" workflow while saving something the app
+    // can actually connect with.
+    let fullConfig;
+    try {
+      fullConfig = linkToV2rayConfig(link);
+    } catch (e) {
+      throw new Error('Hindi ma-convert ang link: ' + e.message);
+    }
+    entry.ConfigJson = JSON.stringify(fullConfig);
+    entry.serverType = PROTO.v2ray_json.serverType;
+    entry.tunnelType = PROTO.v2ray_json.serverType;
     return entry;
   }
   if (currentProto === 'v2ray_json') {
@@ -793,7 +995,11 @@ function buildEntryFromForm() {
   if (currentProto === 'slipstream') {
     const domain = el('fDomain').value.trim();
     if (!domain) throw new Error('Kailangan ng Domain.');
+    const host = el('fHost').value.trim();
+    if (!host) throw new Error('Kailangan ng ServerHost (yung real SSH server na ita-tunnel).');
     entry.Domain = domain;
+    entry.ServerHost = host;
+    put('ServerPort', el('fPort').value.trim());
     put('Resolver', el('fResolver').value.trim());
     put('Authoritative', el('fAuth').value.trim());
     put('Cert', el('fCert').value.trim());
