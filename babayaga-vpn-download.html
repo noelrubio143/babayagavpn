@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BABAYAGA VPN — Download</title>
+<style>
+  :root{
+    --ink:#0e1410;
+    --panel:#141d17;
+    --line:#2a3830;
+    --paper:#eef3ec;
+    --moss:#5fae7a;
+    --moss-dim:#3d7752;
+    --muted:#8fa398;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    background:var(--ink);
+    color:var(--paper);
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:24px;
+  }
+  .card{
+    width:100%;
+    max-width:420px;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:40px 32px;
+    position:relative;
+    overflow:hidden;
+  }
+  .card::before{
+    content:"";
+    position:absolute;
+    top:0; left:0; right:0;
+    height:3px;
+    background:linear-gradient(90deg,var(--moss-dim),var(--moss),var(--moss-dim));
+  }
+  .mark{
+    width:44px; height:44px;
+    border:1.5px solid var(--moss);
+    border-radius:50%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    margin-bottom:28px;
+  }
+  .mark svg{ width:20px; height:20px; }
+  h1{
+    font-size:28px;
+    font-weight:600;
+    letter-spacing:-0.02em;
+    line-height:1.15;
+    margin-bottom:10px;
+  }
+  p.sub{
+    color:var(--muted);
+    font-size:15px;
+    line-height:1.5;
+    margin-bottom:28px;
+  }
+  .meta{
+    display:flex;
+    gap:20px;
+    padding:16px 0;
+    border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line);
+    margin-bottom:28px;
+  }
+  .meta div{ flex:1; }
+  .meta span{
+    display:block;
+    font-size:11px;
+    color:var(--muted);
+    margin-bottom:4px;
+  }
+  .meta strong{
+    font-size:15px;
+    font-weight:600;
+    color:var(--paper);
+  }
+  a.dl{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:10px;
+    width:100%;
+    padding:15px;
+    background:var(--moss);
+    color:#0e1410;
+    text-decoration:none;
+    font-weight:600;
+    font-size:16px;
+    border-radius:3px;
+    transition:background 0.15s ease;
+  }
+  a.dl:hover{ background:#78c491; }
+  a.dl svg{ width:18px; height:18px; }
+  .note{
+    margin-top:18px;
+    font-size:12.5px;
+    color:var(--muted);
+    line-height:1.6;
+    text-align:center;
+  }
+  .note a{ color:var(--moss); text-decoration:none; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="mark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#5fae7a" stroke-width="1.6">
+        <path d="M12 2 4 6v6c0 5 3.4 8.4 8 10 4.6-1.6 8-5 8-10V6l-8-4Z"/>
+      </svg>
+    </div>
+    <h1>BABAYAGA VPN</h1>
+    <p class="sub">Grab the latest Android build straight from the GitHub release.</p>
+
+    <div class="meta">
+      <div>
+        <span>Version</span>
+        <strong>1.0.9</strong>
+      </div>
+      <div>
+        <span>Size</span>
+        <strong>36.9 MB</strong>
+      </div>
+      <div>
+        <span>Platform</span>
+        <strong>Android</strong>
+      </div>
+    </div>
+
+    <a class="dl" href="https://github.com/noelrubio143/babayagavpn/releases/download/1.0.1/BABAYAGAV2RAY.apk" download>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/>
+      </svg>
+      Download APK
+    </a>
+
+    <p class="note">You may need to allow "Install unknown apps" in your Android settings.<br>
+    Source: <a href="https://github.com/noelrubio143/babayagavpn" target="_blank">github.com/noelrubio143/babayagavpn</a></p>
+  </div>
+</body>
+</html>
