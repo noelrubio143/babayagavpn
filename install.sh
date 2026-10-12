@@ -333,17 +333,39 @@ def _read(path):
         return ""
 
 
+def _slip_domain():
+    for f in ("/etc/systemd/system/slipstream-rust-server.service", "/etc/systemd/system/slipstream-rust-xray.service"):
+        m = re.search(r"--domain\s+(\S+)", _read(f))
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _ports(ss_out, proc):
+    return sorted({int(m.group(1)) for m in re.finditer(r":(\d+)\s+.*\"%s\"" % re.escape(proc), ss_out)})
+
+
+def _unit_port(name):
+    m = re.search(r"ExecStart=\S*%s\s+(\d+)" % re.escape(name), _read("/etc/systemd/system/%s.service" % name))
+    return int(m.group(1)) if m else None
+
+
 def status():
     mem = {}
     for line in _read("/proc/meminfo").splitlines():
         k, _, v = line.partition(":")
         mem[k] = int(v.split()[0]) if v.split() else 0
+    SS_OUT = run(["ss", "-tlnp"], check=False).stdout
     du = shutil.disk_usage("/")
     svc = {s: run(["systemctl", "is-active", s], check=False).stdout.strip() == "active" for s in SERVICES}
-    ports = sorted({int(m.group(1)) for m in re.finditer(r":(\d+)\s+.*sshd", run(["ss", "-tlnp"], check=False).stdout)})
+    ports = sorted({int(m.group(1)) for m in re.finditer(r":(\d+)\s+.*sshd", SS_OUT)})
     up = _read("/proc/uptime").split()
     return {
-        "domain": _read(DOMAIN_FILE), "ns_domain": _read(NS_FILE), "hostname": os.uname().nodename,
+        "domain": _read(DOMAIN_FILE), "ns_domain": _read(NS_FILE),
+        "mux_ports": _ports(SS_OUT, "gomux"),
+        "ws_dropbear": _unit_port("ws-dropbear"),
+        "udpgw_ports": _ports(SS_OUT, "badvpn-udpgw"),
+        "slip_domain": _slip_domain(), "hostname": os.uname().nodename,
         "uptime_s": int(float(up[0])) if up else 0, "load": _read("/proc/loadavg").split()[:3],
         "mem_total_mb": mem.get("MemTotal", 0) // 1024, "mem_avail_mb": mem.get("MemAvailable", 0) // 1024,
         "disk_total_gb": round(du.total / 2**30, 1), "disk_used_gb": round(du.used / 2**30, 1),
@@ -730,6 +752,7 @@ const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 const KEY="bby-master-v2";
 const PROTOS=[["vless-ws","VLESS WS"],["vmess-ws","VMess WS"],["trojan-ws","Trojan WS"],["vless-xhttp","VLESS xhttp"],["vmess-xhttp","VMess xhttp"],["trojan-xhttp","Trojan xhttp"],["vless-slip","VLESS Slipstream"]];
 const PATHS={"vless-ws":"/vless","vmess-ws":"/vmess","trojan-ws":"/trojan-ws","vless-xhttp":"/xhttp-vless","vmess-xhttp":"/xhttp-vmess","trojan-xhttp":"/xhttp-trojan"};
+const SLIP_PORT=5201; /* local port of your slipstream client (edit if different) */
 let F={token:"",master:"",pp:"",cur:null}, V=[], INFO={};
 try{const r=localStorage.getItem(KEY);if(r)F=JSON.parse(r)}catch(e){}
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(F))}catch(e){}};
@@ -849,6 +872,18 @@ async function loadOv(){
       <div class="card">${Object.entries(s.services).map(([k,ok])=>`<div class="top" style="margin:4px 0"><span class="dot ${ok?"on":"bad"}"></span><span class="mono">${esc(k)}</span></div>`).join("")}</div>`;
   }catch(e){$("#ov").innerHTML=`<div class="empty">${esc(e.message)}</div>`}
 }
+const ports=s=>{const m=s.mux_ports;if(!m)return {tls:443,ntls:80};return {tls:m.includes(443)?443:(m.find(x=>x!==80)||null),ntls:m.includes(80)?80:null}};
+const sshPorts=s=>{const pt=ports(s),L=["SSH ports: "+((s.ssh_ports||[]).join(", ")||"—")];
+  const nt=[pt.ntls,s.ws_dropbear].filter(Boolean).join(", ");if(nt)L.push("WS non-TLS: "+nt);
+  if(pt.tls)L.push("WS TLS: "+pt.tls);
+  if(s.slip_domain)L.push("Slipstream NS: "+s.slip_domain);
+  if((s.udpgw_ports||[]).length)L.push("UDPGW: "+s.udpgw_ports.join(", "));
+  return L.join("\n")};
+const sshLinks=(s,u,p)=>{const d=s.domain||"DOMAIN",pt=ports(s),L=[];
+  [["WS non-TLS",pt.ntls],["WS non-TLS (2)",s.ws_dropbear],["WS TLS",pt.tls],["SSH direct",(s.ssh_ports||[])[0]]].forEach(([l,x])=>{if(x)L.push(l+": "+d+":"+x+"@"+u+":"+p)});
+  L.push("Payload: GET / HTTP/1.1[crlf]Host: "+d+"[crlf]Upgrade: websocket[crlf][crlf]");
+  if(pt.tls)L.push("SNI: "+d);
+  return L.join("\n")};
 async function info(v){if(!INFO[v.id])INFO[v.id]=await api(v,"/api/status");return INFO[v.id]}
 
 /* targets */
@@ -868,10 +903,11 @@ async function loadSsh(){
   renderTargets($("#s-targets"));
   const v=cur();$("#s-list").innerHTML=`<div class="empty">Kinukuha…</div>`;
   try{
-    const r=await api(v,"/api/ssh");
+    const [r,s]=await Promise.all([api(v,"/api/ssh"),info(v)]);
     const L=r.users.filter(u=>mine(v,"ssh").includes(u.user));
     $("#s-list").innerHTML=L.length?L.map(u=>`<div class="card"><div class="top"><span class="dot ${u.sessions?"on":""}"></span>
       <span class="ttl"><strong>${esc(u.user)}</strong><small>${u.sessions} aktibong session</small></span>${expChip(u.exp)}</div>
+      <details style="margin-top:8px"><summary class="hint" style="cursor:pointer">Mga port</summary><div class="mono" style="white-space:pre-wrap">${esc(sshPorts(s))}</div><div class="row"><button class="btn sm" data-copy="${esc(sshPorts(s))}">Kopyahin</button></div></details>
       <div class="row"><button class="btn sm" data-renew="${esc(u.user)}">Dagdag na araw</button><button class="btn sm dng" data-del="${esc(u.user)}">Burahin</button></div></div>`).join("")
       :`<div class="empty">Wala ka pang SSH account.</div>`;
   }catch(e){$("#s-list").innerHTML=`<div class="empty">${esc(e.message)}</div>`}
@@ -888,7 +924,7 @@ $("#s-create").onclick=async()=>{
     if(x.err){html+=`<div class="warn"><b>${esc(dn(x.v))}</b>: ${esc(x.err)}</div>`;continue}
     let s={};try{s=await info(x.v)}catch(e){}
     addMine(x.v,"ssh",user);
-    const txt=`BABAYAGA VPN · SSH\nServer: ${s.domain||x.v.url}\nPorts: ${(s.ssh_ports||[]).join(", ")}\nUsername: ${user}\nPassword: ${pass}\nExpires: ${x.r.exp}`;
+    const txt=`BABAYAGA VPN · SSH\nServer: ${s.domain||x.v.url}\n${sshPorts(s)}\nUsername: ${user}\nPassword: ${pass}\nExpires: ${x.r.exp}\n\n${sshLinks(s,user,pass)}`;
     html+=`<div class="res">${esc(txt)}</div><div class="row"><button class="btn sm" data-copy="${esc(txt)}">Kopyahin</button></div>`;
   }
   $("#s-result").innerHTML=html;$("#s-create").disabled=false;loadSsh();
@@ -902,20 +938,30 @@ $("#s-list").addEventListener("click",async e=>{
 });
 
 /* Xray */
-function makeLinks(dom,u,e){
-  const n=encodeURIComponent(u+"-"+e.proto),p=PATHS[e.proto];if(!p)return null;
+function makeLinks(dom,u,e,t,pt){
+  t=t||"tls";pt=pt||{tls:443,ntls:80};
+  const nm=u+"-"+e.proto+(t==="ntls"?"-ntls":""),n=encodeURIComponent(nm);
+  if(e.proto==="vless-slip")return t==="ntls"?null:`vless://${e.secret}@127.0.0.1:${SLIP_PORT}?encryption=none&security=none&type=tcp#${n}`;
+  const p=PATHS[e.proto];if(!p)return null;
   const [k,net]=e.proto.split("-"),ep=encodeURIComponent(p);
   const x=net==="xhttp"?"&mode=auto":"";
-  if(k==="vless")return `vless://${e.secret}@${dom}:443?encryption=none&security=tls&sni=${dom}&type=${net}&host=${dom}&path=${ep}${x}#${n}`;
-  if(k==="trojan")return `trojan://${e.secret}@${dom}:443?security=tls&sni=${dom}&type=${net}&host=${dom}&path=${ep}${x}#${n}`;
-  return "vmess://"+btoa(JSON.stringify({v:"2",ps:u+"-"+e.proto,add:dom,port:"443",id:e.secret,aid:"0",scy:"auto",net:net,type:"none",host:dom,path:p,tls:"tls",sni:dom}));
+  const tl=t==="tls",port=tl?pt.tls:pt.ntls,sec=tl?"tls":"none",sni=tl?`&sni=${dom}`:"";if(!port)return null;
+  if(k==="vless")return `vless://${e.secret}@${dom}:${port}?encryption=none&security=${sec}${sni}&type=${net}&host=${dom}&path=${ep}${x}#${n}`;
+  if(k==="trojan")return `trojan://${e.secret}@${dom}:${port}?security=${sec}${sni}&type=${net}&host=${dom}&path=${ep}${x}#${n}`;
+  return "vmess://"+btoa(JSON.stringify({v:"2",ps:nm,add:dom,port:String(port),id:e.secret,aid:"0",scy:"auto",net:net,type:"none",host:dom,path:p,tls:tl?"tls":"",sni:tl?dom:""}));
 }
-function xrCard(dom,u){
-  const links=u.entries.map(e=>{const l=makeLinks(dom,u.user,e);const label=(PROTOS.find(p=>p[0]===e.proto)||[0,e.proto])[1];
-    return l?`<div class="link"><span>${esc(label)}</span><button class="btn sm" data-copy="${esc(l)}">Kopyahin</button></div>`
-            :`<div class="link"><span>${esc(label)} · UUID: ${esc(e.secret)}</span><button class="btn sm" data-copy="${esc(e.secret)}">Kopyahin</button></div>`}).join("");
+function linkSet(dom,u,e,pt){
+  const lb=(PROTOS.find(p=>p[0]===e.proto)||[0,e.proto])[1];
+  const v=e.proto==="vless-slip"?[["tls",lb+" TCP"]]:[["tls",lb+" TLS"],["ntls",lb+" non-TLS"]];
+  return v.map(([t,l])=>[l,makeLinks(dom,u,e,t,pt)]).filter(x=>x[1]);
+}
+function xrCard(dom,u,ns,pt){
+  const links=u.entries.map(e=>{const set=linkSet(dom,u.user,e,pt);
+    return set.length?set.map(([l,k])=>`<div class="link"><span>${esc(l)}</span><button class="btn sm" data-copy="${esc(k)}">Kopyahin</button></div>`).join("")
+      :`<div class="link"><span>${esc(e.proto)} · UUID: ${esc(e.secret)}</span><button class="btn sm" data-copy="${esc(e.secret)}">Kopyahin</button></div>`}).join("");
+  const nsn=ns&&u.entries.some(e=>e.proto==="vless-slip")?`<div class="hint">Slipstream NS: ${esc(ns)}</div>`:"";
   return `<div class="card"><div class="top"><span class="dot on"></span><span class="ttl"><strong>${esc(u.user)}</strong><small>${u.entries.length} protocol · ${esc(u.exp)}</small></span>${expChip(u.exp)}</div>
-    <details style="margin-top:8px"><summary class="hint" style="cursor:pointer">Mga link</summary>${links}</details>
+    <details style="margin-top:8px"><summary class="hint" style="cursor:pointer">Mga link</summary>${links}${nsn}</details>
     <div class="row"><button class="btn sm" data-renew="${esc(u.user)}">Dagdag na araw</button><button class="btn sm dng" data-del="${esc(u.user)}">Burahin</button></div></div>`;
 }
 async function loadXr(){
@@ -925,7 +971,7 @@ async function loadXr(){
   try{
     const [r,s]=await Promise.all([api(v,"/api/xray"),info(v)]);
     const L=r.users.filter(u=>mine(v,"xr").includes(u.user));
-    $("#x-list").innerHTML=L.length?L.map(u=>xrCard(s.domain||"DOMAIN",u)).join(""):`<div class="empty">Wala ka pang Xray account.</div>`;
+    $("#x-list").innerHTML=L.length?L.map(u=>xrCard(s.domain||"DOMAIN",u,s.slip_domain,ports(s))).join(""):`<div class="empty">Wala ka pang Xray account.</div>`;
   }catch(e){$("#x-list").innerHTML=`<div class="empty">${esc(e.message)}</div>`}
 }
 $("#x-create").onclick=async()=>{
@@ -939,8 +985,8 @@ $("#x-create").onclick=async()=>{
     let s={};try{s=await info(x.v)}catch(e){}
     addMine(x.v,"xr",user);
     const dom=s.domain||"DOMAIN";
-    const ls=x.r.protos.map(p=>makeLinks(dom,user,{proto:p,secret:x.r.secret})||("Slipstream UUID: "+x.r.secret));
-    const txt=`BABAYAGA VPN · Xray (${dn(x.v)})\nUser: ${user}\nExpires: ${x.r.exp}\n\n`+ls.join("\n\n");
+    const ls=x.r.protos.flatMap(p=>linkSet(dom,user,{proto:p,secret:x.r.secret},ports(s)).map(([l,k])=>l+":\n"+k));
+    const txt=`BABAYAGA VPN · Xray (${dn(x.v)})\nUser: ${user}\nExpires: ${x.r.exp}\n\n`+ls.join("\n\n")+(x.r.protos.includes("vless-slip")&&s.slip_domain?"\n\nSlipstream NS: "+s.slip_domain:"");
     html+=`<div class="res">${esc(txt)}</div><div class="row"><button class="btn sm" data-copy="${esc(txt)}">Kopyahin lahat</button></div>`;
   }
   $("#x-result").innerHTML=html;$("#x-create").disabled=false;loadXr();
