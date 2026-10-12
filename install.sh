@@ -2,7 +2,7 @@
 # BABAYAGA VPS agent installer v3 (Debian/Ubuntu). Run as root:  bash install.sh
 # Run it on EVERY VPS. The VPS list lives in an encrypted file on GitHub (made with babayaga-admin.html);
 # the panel fetches it and the master VPS connects to the others, so the browser trusts only ONE cert.
-# Options (env): PORT=8443  ROTATE=1 (generate a new token)
+# Options (env): PORT=8443  ROTATE=1 (set a new token)  TOKEN=yourtoken (use this token instead of a random one)
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "Run as root."; exit 1; }
 command -v python3 >/dev/null || { echo "python3 is required."; exit 1; }
@@ -26,6 +26,9 @@ NO_XRAY = os.environ.get("BBY_NO_XRAY") == "1"          # tests only: skip xray 
 SERVICES = ["xray", "ssh", "ws-dropbear", "ws-stunnel", "slipstream-rust-server", "slipstream-rust-xray"]
 PROTECTED = {"root", "admin"}
 LOCK = threading.Lock()
+FAILS = {}            # ip -> [wrong tries, locked until]
+FAIL_LOCK = threading.Lock()
+MAX_FAILS, LOCK_SECS = 5, 900   # 5 wrong tokens -> that IP is blocked for 15 minutes
 
 PROTOS = {
     "vless-ws":     {"marker": "#vless",       "kind": "vless"},
@@ -583,8 +586,21 @@ class Handler(BaseHTTPRequestHandler):
             fn = ROUTES.get((method, path))
         if not fn:
             return self._send(404, {"ok": False, "error": "Not found"})
+        ip = self.client_address[0]
+        with FAIL_LOCK:
+            e = FAILS.get(ip)
+            blocked = bool(e and e[1] > time.time())
+        if blocked:
+            return self._send(429, {"ok": False, "error": "Too many wrong tokens. Try again in 15 minutes."})
         if not self._authed():
+            with FAIL_LOCK:
+                e = FAILS.setdefault(ip, [0, 0])
+                e[0] += 1
+                if e[0] >= MAX_FAILS:
+                    e[0], e[1] = 0, time.time() + LOCK_SECS
             return self._send(401, {"ok": False, "error": "Invalid token"})
+        with FAIL_LOCK:
+            FAILS.pop(ip, None)
         try:
             body = _body_json(self) if method == "POST" else {}
             res = fn(body)
@@ -1032,7 +1048,7 @@ python3 -m py_compile "$DIR/agent.py"
 
 NEWTOKEN=""
 if [ ! -f "$DIR/agent.json" ] || [ "${ROTATE:-0}" = "1" ]; then
-  NEWTOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
+  NEWTOKEN="${TOKEN:-$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')}"
   HASH="$(printf %s "$NEWTOKEN" | sha256sum | cut -d' ' -f1)"
   CERT=/etc/xray/xray.crt; KEY=/etc/xray/xray.key
   cat > "$DIR/agent.json" <<EOF
