@@ -62,8 +62,7 @@ details.pr>summary{list-style:none;cursor:pointer;color:var(--muted);font-size:1
 <section id="t-vps" class="on">
   <h2>Mga VPS</h2>
   <div id="vpsList"></div>
-  <p class="hint">Galing sa GitHub ang listahan. Baguhin sa <a href="babayaga-admin.html" style="color:var(--ember)">admin page</a>.</p>
-  <div class="row"><button class="btn" id="refresh">I-refresh mula sa GitHub</button><button class="btn dng" id="logout">Logout</button></div>
+    <div class="row"><button class="btn" id="refresh">I-refresh mula sa GitHub</button><button class="btn dng" id="logout">Logout</button></div>
 </section>
 
 <section id="t-ov">
@@ -203,11 +202,11 @@ async function syncFleet(c){
 }
 async function fromGithub(){
   const f=await ghFetch();
-  if(!f||!f.data)return {err:"Wala pang file na "+GH.file+" sa GitHub repo mo. Buksan ang admin page para gawin ito."};
+  if(!f||!f.data)return {err:"Wala pang file na "+GH.file+" sa GitHub repo mo."};
   if(!F.pp)return {need:true};
   let c;
   try{c=await dec(f,F.pp)}catch(e){F.pp="";save();return {need:true,err:"Maling passphrase."}}
-  if(!c||!c.master||!/^https:\/\//.test(c.master.url||"")||!c.master.token)return {err:"Kulang ang master URL/token sa file. Ayusin sa admin page."};
+  if(!c||!c.master||!/^https:\/\//.test(c.master.url||"")||!c.master.token)return {err:"Kulang ang master URL/token sa file."};
   F.master=c.master.url.trim().replace(/\/+$/,"");F.token=c.master.token;save();
   try{await syncFleet(c)}catch(e){return {err:e.message}}
   return {ok:true};
