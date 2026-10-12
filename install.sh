@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# BABAYAGA VPS agent installer (Debian/Ubuntu). Run as root:  bash install.sh
+# BABAYAGA VPS agent installer v2 (Debian/Ubuntu). Run as root:  bash install.sh
+# Run it on EVERY VPS. The one you open in the browser becomes the MASTER: it serves the panel
+# and manages the other VPS for you (add them inside the panel). One link, one token.
 # Options (env): PORT=8443  ROTATE=1 (generate a new token)
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "Run as root."; exit 1; }
@@ -12,7 +14,7 @@ mkdir -p "$DIR"
 cat > "$DIR/agent.py" <<'BBY_PY_EOF'
 #!/usr/bin/env python3
 """BABAYAGA VPN agent - manages SSH + Xray accounts. Token-protected HTTPS API. Run as root."""
-import os, re, sys, json, ssl, time, uuid, hmac, hashlib, shutil, subprocess, threading, datetime
+import os, re, sys, json, ssl, time, uuid, hmac, hashlib, shutil, subprocess, threading, datetime, http.client
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 BASE = os.environ.get("BBY_DIR", "/opt/babayaga")
@@ -349,6 +351,131 @@ def status():
     }
 
 
+# ---------------------------------------------------------------- fleet (master mode)
+# One panel link manages many VPS: this agent keeps the list of other agents (URL + token)
+# in fleet.json (root-only) and forwards requests to them server-side, so the browser only
+# ever talks to THIS server (one certificate, one token).
+FLEET_FILE = os.path.join(BASE, "fleet.json")
+FLOCK = threading.Lock()
+ALLOWED = {("GET", "status"), ("GET", "ssh"), ("POST", "ssh"), ("POST", "ssh/renew"), ("POST", "ssh/delete"),
+           ("GET", "xray"), ("POST", "xray"), ("POST", "xray/renew"), ("POST", "xray/delete")}
+
+
+def fleet_load():
+    try:
+        with open(FLEET_FILE) as f:
+            d = json.load(f)
+        return d if isinstance(d, list) else []
+    except Exception:
+        return []
+
+
+def fleet_save(d):
+    tmp = FLEET_FILE + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(d, f)
+    os.replace(tmp, FLEET_FILE)
+
+
+def _parse_url(url):
+    m = re.match(r"^https://([A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\])(?::(\d{1,5}))?/?$", url or "")
+    if not m:
+        raise ApiError("URL must look like https://IP-or-domain:8443")
+    port = int(m.group(2) or 443)
+    if not 1 <= port <= 65535:
+        raise ApiError("Bad port")
+    return m.group(1).strip("[]"), port
+
+
+def remote_call(v, method, sub, body=None):
+    host, port = _parse_url(v["url"])
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE      # agents use self-signed certs; we pin the fingerprint instead
+    conn = http.client.HTTPSConnection(host, port, timeout=30, context=ctx)
+    try:
+        conn.connect()
+        fp = hashlib.sha256(conn.sock.getpeercert(True)).hexdigest()
+        if v.get("fp") and not hmac.compare_digest(fp, v["fp"]):
+            raise ApiError("Certificate of %s changed. Remove it and add it again." % v.get("name", "VPS"), 502)
+        hdr = {"Authorization": "Bearer " + v["token"]}
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode()
+            hdr["Content-Type"] = "application/json"
+        conn.request(method, "/api/" + sub, body=data, headers=hdr)
+        r = conn.getresponse()
+        raw = r.read(1 << 20)
+        try:
+            j = json.loads(raw or b"{}")
+        except Exception:
+            j = {"ok": False, "error": "Bad reply from VPS"}
+        return r.status, j, fp
+    except ApiError:
+        raise
+    except Exception as e:
+        raise ApiError("Cannot reach %s: %s" % (v.get("name", "VPS"), e), 502)
+    finally:
+        conn.close()
+
+
+def fleet_list():
+    out = [{"id": "local", "name": os.uname().nodename + " (master)", "url": "this server"}]
+    with FLOCK:
+        for v in fleet_load():
+            out.append({"id": v["id"], "name": v["name"], "url": v["url"]})
+    return {"vps": out}
+
+
+def fleet_add(name, url, token):
+    name = (name if isinstance(name, str) else "").strip()[:40] or "VPS"
+    url = (url if isinstance(url, str) else "").strip().rstrip("/")
+    _parse_url(url)
+    if not isinstance(token, str) or not 8 <= len(token.strip()) <= 200:
+        raise ApiError("Missing or bad token")
+    v = {"id": uuid.uuid4().hex[:8], "name": name, "url": url, "token": token.strip()}
+    st, j, fp = remote_call(v, "GET", "status")
+    if st == 401:
+        raise ApiError("That VPS rejected the token", 400)
+    if st != 200 or not j.get("ok"):
+        raise ApiError(j.get("error") or "VPS answered HTTP %d" % st, 502)
+    v["fp"] = fp
+    with FLOCK:
+        d = fleet_load()
+        d.append(v)
+        fleet_save(d)
+    return {"id": v["id"]}
+
+
+def fleet_delete(vid):
+    with FLOCK:
+        d = fleet_load()
+        n = [x for x in d if x["id"] != vid]
+        if len(n) == len(d):
+            raise ApiError("VPS not found", 404)
+        fleet_save(n)
+    return {}
+
+
+def proxy(vid, method, sub, body):
+    if (method, sub) not in ALLOWED:
+        raise ApiError("Not found", 404)
+    if vid == "local":
+        return ROUTES[(method, "/api/" + sub)](body)
+    with FLOCK:
+        v = next((x for x in fleet_load() if x["id"] == vid), None)
+    if not v:
+        raise ApiError("VPS not found", 404)
+    st, j, _ = remote_call(v, method, sub, body if method == "POST" else None)
+    if st == 401:
+        raise ApiError("%s rejected its token" % v["name"], 502)
+    if st != 200 or j.get("ok") is False:
+        raise ApiError(j.get("error") or "HTTP %d" % st, st if 400 <= st < 600 else 502)
+    j.pop("ok", None)
+    return j
+
+
 # ---------------------------------------------------------------- HTTP
 def _body_json(h):
     n = int(h.headers.get("Content-Length") or 0)
@@ -373,6 +500,9 @@ ROUTES = {
     ("POST", "/api/xray"): lambda b: xray_add(b.get("user"), b.get("days"), b.get("protos")),
     ("POST", "/api/xray/renew"): lambda b: xray_renew(b.get("user"), b.get("days")),
     ("POST", "/api/xray/delete"): lambda b: xray_delete(b.get("user")),
+    ("GET", "/api/fleet"): lambda b: fleet_list(),
+    ("POST", "/api/fleet"): lambda b: fleet_add(b.get("name"), b.get("url"), b.get("token")),
+    ("POST", "/api/fleet/delete"): lambda b: fleet_delete(b.get("id")),
 }
 
 
@@ -413,7 +543,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, f.read(), "text/html; charset=utf-8")
             except Exception:
                 return self._send(404, {"ok": False, "error": "panel.html missing"})
-        fn = ROUTES.get((method, path))
+        pm = re.match(r"^/api/v/([a-z0-9]{4,12})/(.+)$", path)
+        if pm:
+            fn = lambda b, pm=pm: proxy(pm.group(1), method, pm.group(2), b)
+        else:
+            fn = ROUTES.get((method, path))
         if not fn:
             return self._send(404, {"ok": False, "error": "Not found"})
         if not self._authed():
@@ -521,6 +655,7 @@ input:focus,select:focus{border-color:var(--ember)}
 .link{display:flex;gap:8px;align-items:center;margin:6px 0}.link span{flex:1;min-width:0;font:12px var(--mono);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .res{background:#0e1311;border:1px solid var(--ok);border-radius:12px;padding:12px;margin:10px 0;white-space:pre-wrap;font:12.5px/1.5 var(--mono)}
 .warn{background:var(--ember-dim);border:1px solid #5a3321;border-radius:12px;padding:10px 12px;font-size:13px;margin:10px 0}
+#login{display:none;max-width:780px;margin:0 auto;padding:6px 16px}body.noauth #login{display:block}body.noauth nav,body.noauth main{display:none}
 #msg{position:fixed;left:12px;right:12px;bottom:calc(84px + env(safe-area-inset-bottom,0));max-width:756px;margin:0 auto;background:#1d2823;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px;display:none;z-index:9}
 #msg.ok{border-color:var(--ok)}#msg.bad{border-color:var(--bad)}
 @media(min-width:560px){.grid{grid-template-columns:1fr 1fr 1fr}}
@@ -528,6 +663,7 @@ input:focus,select:focus{border-color:var(--ember)}
 </head>
 <body>
 <header><h1>BABAYAGA VPS Panel</h1><p>SSH at Xray accounts sa lahat ng VPS mo.</p><span id="cur">walang napiling VPS</span></header>
+<div id="login"><h2>Mag-login</h2><p class="hint">Ilagay ang token ng master VPS na ito.</p><label class="f"><span>Token</span><input type="password" id="l-token" autocomplete="off"></label><div class="row"><button class="btn pri" id="l-go">Pumasok</button></div></div>
 <main>
 <section id="t-vps" class="on">
   <h2>Mga VPS</h2>
@@ -535,11 +671,11 @@ input:focus,select:focus{border-color:var(--ember)}
   <h2>Magdagdag ng VPS</h2>
   <div class="grid">
     <label class="f"><span>Pangalan</span><input type="text" id="n-name" placeholder="Alibaba SG"></label>
-    <label class="f wide"><span>URL ng agent</span><input type="text" id="n-url" placeholder="https://domain-mo.com:8443" autocapitalize="off"></label>
-    <label class="f wide"><span>Token</span><input type="password" id="n-token" autocomplete="off"></label>
+    <label class="f wide"><span>URL ng agent</span><input type="text" id="n-url" placeholder="https://IP-ng-ibang-vps:8443" autocapitalize="off"></label>
+    <label class="f wide"><span>Token ng VPS na idadagdag</span><input type="password" id="n-token" autocomplete="off"></label>
   </div>
   <div class="row"><button class="btn pri" id="addVps">Subukan at idagdag</button></div>
-  <div class="warn">Naka-save ang token sa browser na ito lang. Gamitin ito sa sarili mong device.</div>
+  <div class="warn">Naka-save ang mga token ng ibang VPS sa master server (hindi sa browser). Isang link at isang token lang ang kailangan mo.</div>
 </section>
 
 <section id="t-ov">
@@ -584,20 +720,21 @@ input:focus,select:focus{border-color:var(--ember)}
 "use strict";
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const KEY="bby-fleet-v1";
+const KEY="bby-master-v2";
 const PROTOS=[["vless-ws","VLESS WS"],["vmess-ws","VMess WS"],["trojan-ws","Trojan WS"],["vless-xhttp","VLESS xhttp"],["vmess-xhttp","VMess xhttp"],["trojan-xhttp","Trojan xhttp"],["vless-slip","VLESS Slipstream"]];
 const PATHS={"vless-ws":"/vless","vmess-ws":"/vmess","trojan-ws":"/trojan-ws","vless-xhttp":"/xhttp-vless","vmess-xhttp":"/xhttp-vmess","trojan-xhttp":"/xhttp-trojan"};
-let F={vps:[],cur:null}, INFO={};
+let F={token:"",cur:null}, V=[], INFO={};
 try{const r=localStorage.getItem(KEY);if(r)F=JSON.parse(r)}catch(e){}
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(F))}catch(e){}};
-const cur=()=>F.vps.find(v=>v.id===F.cur);
-const uid=()=>Math.random().toString(36).slice(2,9);
+const cur=()=>V.find(v=>v.id===F.cur);
 function msg(t,k){const m=$("#msg");m.textContent=t;m.className=k||"";m.style.display="block";clearTimeout(msg.t);msg.t=setTimeout(()=>m.style.display="none",4500)}
 async function api(v,path,body){
+  const url=v?"/api/v/"+v.id+path.slice(4):path;
   let r;
-  try{r=await fetch(v.url.replace(/\/+$/,"")+path,{method:body?"POST":"GET",headers:Object.assign({Authorization:"Bearer "+v.token},body?{"Content-Type":"application/json"}:{}),body:body?JSON.stringify(body):undefined})}
-  catch(e){throw new Error("Hindi maabot ang VPS. Tingnan ang URL, ang port sa firewall/security group, at ang certificate.")}
+  try{r=await fetch(url,{method:body?"POST":"GET",headers:Object.assign({Authorization:"Bearer "+F.token},body?{"Content-Type":"application/json"}:{}),body:body?JSON.stringify(body):undefined})}
+  catch(e){throw new Error("Hindi maabot ang master VPS. Tingnan kung bukas ang port at tinanggap mo ang certificate.")}
   let j={};try{j=await r.json()}catch(e){}
+  if(r.status===401&&j.error==="Invalid token"){F.token="";save();document.body.classList.add("noauth");throw new Error("Maling token.")}
   if(!r.ok||j.ok===false)throw new Error(j.error||("HTTP "+r.status));
   return j;
 }
@@ -620,24 +757,27 @@ function load(tab){
 
 /* VPS list */
 function head(){$("#cur").textContent=cur()?cur().name:"walang napiling VPS"}
+async function loadFleet(){const r=await api(null,"/api/fleet");V=r.vps;if(!cur())F.cur=V[0]?V[0].id:null;save()}
 function renderVps(){
   head();
-  $("#vpsList").innerHTML=F.vps.length?F.vps.map(v=>`<div class="card ${v.id===F.cur?"sel":""}"><div class="top"><span class="dot" id="d-${v.id}"></span>
+  $("#vpsList").innerHTML=V.length?V.map(v=>`<div class="card ${v.id===F.cur?"sel":""}"><div class="top"><span class="dot" id="d-${esc(v.id)}"></span>
     <span class="ttl"><strong>${esc(v.name)}</strong><small>${esc(v.url)}</small></span></div>
-    <div class="row"><button class="btn sm" data-use="${v.id}">${v.id===F.cur?"Napili":"Piliin"}</button><button class="btn sm dng" data-rm="${v.id}">Alisin</button></div></div>`).join("")
-    :`<div class="empty">Wala pang VPS. Idagdag sa ibaba.</div>`;
-  F.vps.forEach(v=>api(v,"/api/status").then(()=>{const d=$("#d-"+v.id);if(d)d.className="dot on"}).catch(()=>{const d=$("#d-"+v.id);if(d)d.className="dot bad"}));
+    <div class="row"><button class="btn sm" data-use="${esc(v.id)}">${v.id===F.cur?"Napili":"Piliin"}</button>${v.id==="local"?"":`<button class="btn sm dng" data-rm="${esc(v.id)}">Alisin</button>`}</div></div>`).join("")
+    :`<div class="empty">Wala pang VPS.</div>`;
+  V.forEach(v=>api(v,"/api/status").then(()=>{const d=$("#d-"+v.id);if(d)d.className="dot on"}).catch(()=>{const d=$("#d-"+v.id);if(d)d.className="dot bad"}));
 }
-$("#vpsList").addEventListener("click",e=>{
+$("#vpsList").addEventListener("click",async e=>{
   const b=e.target.closest("button");if(!b)return;
   if(b.dataset.use){F.cur=b.dataset.use;save();renderVps()}
-  if(b.dataset.rm&&confirm("Alisin ang VPS na ito sa panel? (Hindi nito binubura ang server.)")){F.vps=F.vps.filter(v=>v.id!==b.dataset.rm);if(F.cur===b.dataset.rm)F.cur=F.vps[0]?.id||null;save();renderVps()}
+  if(b.dataset.rm&&confirm("Alisin ang VPS na ito sa panel? (Hindi nito binubura ang server.)")){
+    try{await api(null,"/api/fleet/delete",{id:b.dataset.rm});await loadFleet();renderVps()}catch(er){msg(er.message,"bad")}
+  }
 });
 $("#addVps").onclick=async()=>{
-  const v={id:uid(),name:$("#n-name").value.trim()||"VPS",url:$("#n-url").value.trim(),token:$("#n-token").value.trim()};
-  if(!/^https?:\/\//.test(v.url)||!v.token)return msg("Kulang ang URL o token.","bad");
+  const v={name:$("#n-name").value.trim()||"VPS",url:$("#n-url").value.trim(),token:$("#n-token").value.trim()};
+  if(!/^https:\/\//.test(v.url)||!v.token)return msg("Kulang ang URL (https://…) o token.","bad");
   $("#addVps").disabled=true;
-  try{await api(v,"/api/status");F.vps.push(v);if(!F.cur)F.cur=v.id;save();$("#n-name").value=$("#n-url").value=$("#n-token").value="";renderVps();msg("Naidagdag na.","ok")}
+  try{await api(null,"/api/fleet",v);$("#n-name").value=$("#n-url").value=$("#n-token").value="";await loadFleet();renderVps();msg("Naidagdag na.","ok")}
   catch(e){msg(e.message,"bad")}finally{$("#addVps").disabled=false}
 };
 
@@ -658,9 +798,9 @@ async function info(v){if(!INFO[v.id])INFO[v.id]=await api(v,"/api/status");retu
 
 /* targets */
 function renderTargets(el){
-  el.innerHTML=F.vps.map(v=>`<label><input type="checkbox" value="${v.id}" ${v.id===F.cur?"checked":""}> ${esc(v.name)}</label>`).join("");
+  el.innerHTML=V.map(v=>`<label><input type="checkbox" value="${v.id}" ${v.id===F.cur?"checked":""}> ${esc(v.name)}</label>`).join("");
 }
-const picked=el=>[...el.querySelectorAll("input:checked")].map(i=>F.vps.find(v=>v.id===i.value)).filter(Boolean);
+const picked=el=>[...el.querySelectorAll("input:checked")].map(i=>V.find(v=>v.id===i.value)).filter(Boolean);
 async function multi(targets,fn){
   const out=[];
   for(const v of targets){try{out.push({v,r:await fn(v)})}catch(e){out.push({v,err:e.message})}}
@@ -754,9 +894,14 @@ $("#x-list").addEventListener("click",async e=>{
 });
 document.addEventListener("click",e=>{const b=e.target.closest("[data-copy]");if(b)copy(b.dataset.copy)});
 
-/* if served by an agent, pre-fill its URL */
-if(location.protocol.startsWith("http")&&!F.vps.length&&location.port){$("#n-url").value=location.origin}
-renderVps();
+async function start(){
+  if(!F.token){document.body.classList.add("noauth");return}
+  document.body.classList.remove("noauth");
+  try{await loadFleet()}catch(e){msg(e.message,"bad");return}
+  renderVps();
+}
+$("#l-go").onclick=()=>{const t=$("#l-token").value.trim();if(!t)return;F.token=t;save();$("#l-token").value="";start()};
+start();
 })();
 </script>
 </body>
@@ -810,4 +955,6 @@ else
   echo "TOKEN : (unchanged. Run with ROTATE=1 to create a new one)"
 fi
 echo "Open TCP port $PORT_NOW in your Alibaba Cloud security group."
+echo "PANEL : https://$DOMAIN:$PORT_NOW/   (open on the master VPS only; accept the certificate warning once)"
+echo "Other VPS: just run this script there, then add its URL + token inside the panel."
 echo "==========================================================="
