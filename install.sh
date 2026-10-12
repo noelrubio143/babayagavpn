@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# BABAYAGA VPS agent installer v2 (Debian/Ubuntu). Run as root:  bash install.sh
-# Run it on EVERY VPS. Pick one as MASTER: log in to the panel (github.io) with the master's URL+token,
-# then add the other VPS inside the panel. The master connects to them, so the browser only trusts ONE cert.
+# BABAYAGA VPS agent installer v3 (Debian/Ubuntu). Run as root:  bash install.sh
+# Run it on EVERY VPS. The VPS list lives in an encrypted file on GitHub (made with babayaga-admin.html);
+# the panel fetches it and the master VPS connects to the others, so the browser trusts only ONE cert.
 # Options (env): PORT=8443  ROTATE=1 (generate a new token)
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "Run as root."; exit 1; }
@@ -420,15 +420,21 @@ def remote_call(v, method, sub, body=None):
         conn.close()
 
 
+def _norm(u):
+    return (u or "").strip().rstrip("/").lower()
+
+
 def fleet_list():
     out = [{"id": "local", "name": os.uname().nodename + " (master)", "url": "this server"}]
     with FLOCK:
         for v in fleet_load():
-            out.append({"id": v["id"], "name": v["name"], "url": v["url"]})
+            out.append({"id": v["id"], "name": v["name"], "url": v["url"],
+                        "tsig": hashlib.sha256(v["token"].encode()).hexdigest()})
     return {"vps": out}
 
 
 def fleet_add(name, url, token):
+    """Add a VPS, or update it (name/token) when the same URL is already in the list."""
     name = (name if isinstance(name, str) else "").strip()[:40] or "VPS"
     url = (url if isinstance(url, str) else "").strip().rstrip("/")
     _parse_url(url)
@@ -437,12 +443,17 @@ def fleet_add(name, url, token):
     v = {"id": uuid.uuid4().hex[:8], "name": name, "url": url, "token": token.strip()}
     st, j, fp = remote_call(v, "GET", "status")
     if st == 401:
-        raise ApiError("That VPS rejected the token", 400)
+        raise ApiError("%s rejected the token" % name, 400)
     if st != 200 or not j.get("ok"):
         raise ApiError(j.get("error") or "VPS answered HTTP %d" % st, 502)
     v["fp"] = fp
     with FLOCK:
         d = fleet_load()
+        for x in d:
+            if _norm(x["url"]) == _norm(url):
+                x.update({"name": name, "url": url, "token": v["token"], "fp": fp})
+                fleet_save(d)
+                return {"id": x["id"], "updated": True}
         d.append(v)
         fleet_save(d)
     return {"id": v["id"]}
@@ -663,19 +674,13 @@ input:focus,select:focus{border-color:var(--ember)}
 </head>
 <body>
 <header><h1>BABAYAGA VPS Panel</h1><p>SSH at Xray accounts sa lahat ng VPS mo.</p><span id="cur">walang napiling VPS</span></header>
-<div id="login"><h2>Mag-login</h2><p class="hint">Ilagay ang URL at token ng master VPS (isang beses lang). Ang master na ang kokonekta sa lahat ng ibang VPS.</p><label class="f"><span>URL ng master</span><input type="text" id="l-url" placeholder="https://IP-ng-master:8443" autocapitalize="off"></label><label class="f" style="margin-top:10px"><span>Token ng master</span><input type="password" id="l-token" autocomplete="off"></label><div class="row"><button class="btn pri" id="l-go">Pumasok</button></div><div id="l-err" class="warn" style="display:none"></div></div>
+<div id="login"><div id="pp" style="display:none"><h2>Passphrase</h2><p class="hint">Ilagay ang passphrase ng listahan ng VPS (isang beses lang sa device na ito).</p><label class="f"><span>Passphrase</span><input type="password" id="p-pass" autocomplete="off"></label><div class="row"><button class="btn pri" id="p-go">Buksan</button></div></div><div id="manual"><h2>Mag-login</h2><p class="hint">Ilagay ang URL at token ng master VPS (isang beses lang). Ang master na ang kokonekta sa lahat ng ibang VPS.</p><label class="f"><span>URL ng master</span><input type="text" id="l-url" placeholder="https://IP-ng-master:8443" autocapitalize="off"></label><label class="f" style="margin-top:10px"><span>Token ng master</span><input type="password" id="l-token" autocomplete="off"></label><div class="row"><button class="btn pri" id="l-go">Pumasok</button></div></div><div id="l-err" class="warn" style="display:none"></div></div>
 <main>
 <section id="t-vps" class="on">
   <h2>Mga VPS</h2>
   <div id="vpsList"></div>
-  <h2>Magdagdag ng VPS</h2>
-  <div class="grid">
-    <label class="f"><span>Pangalan</span><input type="text" id="n-name" placeholder="Alibaba SG"></label>
-    <label class="f wide"><span>URL ng agent</span><input type="text" id="n-url" placeholder="https://IP-ng-ibang-vps:8443" autocapitalize="off"></label>
-    <label class="f wide"><span>Token ng VPS na idadagdag</span><input type="password" id="n-token" autocomplete="off"></label>
-  </div>
-  <div class="row"><button class="btn pri" id="addVps">Subukan at idagdag</button></div>
-  <div class="warn">Naka-save ang mga token ng ibang VPS sa master server (hindi sa browser). Isang link at isang token lang ang kailangan mo.</div>
+  <div class="warn">Galing sa GitHub ang listahan ng VPS. Para magdagdag, magbago o mag-alis, gamitin ang <a href="babayaga-admin.html" style="color:var(--ember)">admin page</a>.</div>
+  <div class="row"><button class="btn" id="refresh">I-refresh mula sa GitHub</button><button class="btn dng" id="logout">Logout</button></div>
 </section>
 
 <section id="t-ov">
@@ -723,7 +728,7 @@ const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 const KEY="bby-master-v2";
 const PROTOS=[["vless-ws","VLESS WS"],["vmess-ws","VMess WS"],["trojan-ws","Trojan WS"],["vless-xhttp","VLESS xhttp"],["vmess-xhttp","VMess xhttp"],["trojan-xhttp","Trojan xhttp"],["vless-slip","VLESS Slipstream"]];
 const PATHS={"vless-ws":"/vless","vmess-ws":"/vmess","trojan-ws":"/trojan-ws","vless-xhttp":"/xhttp-vless","vmess-xhttp":"/xhttp-vmess","trojan-xhttp":"/xhttp-trojan"};
-let F={token:"",master:"",cur:null}, V=[], INFO={};
+let F={token:"",master:"",pp:"",cur:null}, V=[], INFO={};
 try{const r=localStorage.getItem(KEY);if(r)F=JSON.parse(r)}catch(e){}
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(F))}catch(e){}};
 const cur=()=>V.find(v=>v.id===F.cur);
@@ -763,25 +768,64 @@ function renderVps(){
   head();
   $("#vpsList").innerHTML=V.length?V.map(v=>`<div class="card ${v.id===F.cur?"sel":""}"><div class="top"><span class="dot" id="d-${esc(v.id)}"></span>
     <span class="ttl"><strong>${esc(v.name)}</strong><small>${esc(v.url)}</small></span></div>
-    <div class="row"><button class="btn sm" data-use="${esc(v.id)}">${v.id===F.cur?"Napili":"Piliin"}</button>${v.id==="local"?"":`<button class="btn sm dng" data-rm="${esc(v.id)}">Alisin</button>`}</div></div>`).join("")
+    <div class="row"><button class="btn sm" data-use="${esc(v.id)}">${v.id===F.cur?"Napili":"Piliin"}</button></div></div>`).join("")
     :`<div class="empty">Wala pang VPS.</div>`;
   V.forEach(v=>api(v,"/api/status").then(()=>{const d=$("#d-"+v.id);if(d)d.className="dot on"}).catch(()=>{const d=$("#d-"+v.id);if(d)d.className="dot bad"}));
 }
-$("#vpsList").addEventListener("click",async e=>{
-  const b=e.target.closest("button");if(!b)return;
-  if(b.dataset.use){F.cur=b.dataset.use;save();renderVps()}
-  if(b.dataset.rm&&confirm("Alisin ang VPS na ito sa panel? (Hindi nito binubura ang server.)")){
-    try{await api(null,"/api/fleet/delete",{id:b.dataset.rm});await loadFleet();renderVps()}catch(er){msg(er.message,"bad")}
-  }
+$("#vpsList").addEventListener("click",e=>{
+  const b=e.target.closest("button");if(!b||!b.dataset.use)return;
+  F.cur=b.dataset.use;save();renderVps();
 });
-$("#addVps").onclick=async()=>{
-  const v={name:$("#n-name").value.trim()||"VPS",url:$("#n-url").value.trim(),token:$("#n-token").value.trim()};
-  if(!/^https:\/\//.test(v.url)||!v.token)return msg("Kulang ang URL (https://…) o token.","bad");
-  $("#addVps").disabled=true;
-  try{await api(null,"/api/fleet",v);$("#n-name").value=$("#n-url").value=$("#n-token").value="";await loadFleet();renderVps();msg("Naidagdag na.","ok")}
-  catch(e){msg(e.message,"bad")}finally{$("#addVps").disabled=false}
-};
 
+/* VPS list lives in a GitHub file (AES-GCM encrypted with a passphrase). Panel auto-fetches it. */
+const GH=(()=>{const m=location.hostname.match(/^([^.]+)\.github\.io$/i),seg=location.pathname.split("/").filter(Boolean)[0];
+  return m&&seg&&!/\.html?$/i.test(seg)?{owner:m[1],repo:seg,file:"vps.enc.json"}:{owner:"noelrubio143",repo:"babayagavpn",file:"vps.enc.json"}})();
+const ub64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function dec(f,pass){
+  const km=await crypto.subtle.importKey("raw",new TextEncoder().encode(pass),"PBKDF2",false,["deriveKey"]);
+  const k=await crypto.subtle.deriveKey({name:"PBKDF2",salt:ub64(f.salt),iterations:200000,hash:"SHA-256"},km,{name:"AES-GCM",length:256},false,["decrypt"]);
+  return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:ub64(f.iv)},k,ub64(f.data))));
+}
+async function sha(s){return [...new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s)))].map(b=>b.toString(16).padStart(2,"0")).join("")}
+async function ghFetch(){
+  let r=await fetch(`https://api.github.com/repos/${GH.owner}/${GH.repo}/contents/${GH.file}`,{headers:{Accept:"application/vnd.github.raw+json"},cache:"no-store"}).catch(()=>null);
+  if(!r||!r.ok)r=await fetch("./"+GH.file+"?t="+Date.now(),{cache:"no-store"}).catch(()=>null);
+  if(!r||!r.ok)return null;
+  try{return await r.json()}catch(e){return null}
+}
+const nu=u=>String(u||"").trim().replace(/\/+$/,"").toLowerCase();
+async function syncFleet(c){
+  await loadFleet();
+  const want=(c.vps||[]).filter(x=>x&&/^https:\/\//.test(x.url||"")&&x.token);
+  const have=new Map(V.filter(v=>v.id!=="local").map(v=>[nu(v.url),v]));
+  let add=0,rm=0;const bad=[];
+  for(const x of want){
+    const nm=(x.name||"VPS").slice(0,40),h=have.get(nu(x.url));
+    if(h&&h.tsig===await sha(x.token)&&h.name===nm)continue;
+    try{await api(null,"/api/fleet",{name:nm,url:x.url,token:x.token});add++}catch(e){bad.push(nm+": "+e.message)}
+  }
+  const keep=new Set(want.map(x=>nu(x.url)));
+  for(const [u,v] of have)if(!keep.has(u)){try{await api(null,"/api/fleet/delete",{id:v.id});rm++}catch(e){}}
+  if(add||rm)await loadFleet();
+  if(bad.length)msg(bad.join(" · "),"bad");
+}
+async function fromGithub(){
+  const f=await ghFetch();
+  if(!f||!f.data)return {err:"Wala pang file na "+GH.file+" sa GitHub repo mo. Buksan ang admin page para gawin ito."};
+  if(!F.pp)return {need:true};
+  let c;
+  try{c=await dec(f,F.pp)}catch(e){F.pp="";save();return {need:true,err:"Maling passphrase."}}
+  if(!c||!c.master||!/^https:\/\//.test(c.master.url||"")||!c.master.token)return {err:"Kulang ang master URL/token sa file. Ayusin sa admin page."};
+  F.master=c.master.url.trim().replace(/\/+$/,"");F.token=c.master.token;save();
+  try{await syncFleet(c)}catch(e){return {err:e.message}}
+  return {ok:true};
+}
+function showApp(){document.body.classList.remove("noauth");$("#l-err").style.display="none";renderVps()}
+function showLogin(pp,note){
+  document.body.classList.add("noauth");
+  $("#pp").style.display=pp?"block":"none";$("#manual").style.display=pp?"none":"block";
+  $("#l-err").textContent=note||"";$("#l-err").style.display=note?"block":"none";
+}
 /* overview */
 async function loadOv(){
   const v=cur();$("#ov").innerHTML=`<div class="empty">Kinukuha…</div>`;
@@ -897,22 +941,25 @@ document.addEventListener("click",e=>{const b=e.target.closest("[data-copy]");if
 
 async function start(){
   if(!F.master&&location.port)F.master=location.origin;   /* served by the agent itself */
+  if(GH){
+    /* public github.io page: never show URL/token fields, only the passphrase box */
+    const r=await fromGithub();
+    if(r.ok)return showApp();
+    return showLogin(true,r.err);
+  }
   $("#l-url").value=F.master||"";
-  if(!F.token||!F.master){document.body.classList.add("noauth");return}
-  document.body.classList.remove("noauth");
-  try{await loadFleet();$("#l-err").style.display="none"}
-  catch(e){
-    document.body.classList.add("noauth");
-    const old=/not found|HTTP 404/i.test(e.message);
-    $("#l-err").textContent=old?"Luma pa ang agent ng master na ito (walang multi-VPS). I-run ulit ang install.sh sa master VPS, tapos subukan ulit.":e.message;
-    $("#l-err").style.display="block";return}
-  renderVps();
+  if(!F.token||!F.master)return showLogin(false,"");
+  try{await loadFleet()}catch(e){return showLogin(false,e.message)}
+  showApp();
 }
 $("#l-go").onclick=()=>{
   const u=$("#l-url").value.trim().replace(/\/+$/,""),t=$("#l-token").value.trim();
   if(!/^https:\/\/[^\s\/]+$/.test(u)||!t)return msg("Ilagay ang https:// URL at token.","bad");
   F.master=u;F.token=t;save();$("#l-token").value="";start();
 };
+$("#p-go").onclick=()=>{const p=$("#p-pass").value;if(p){F.pp=p;save()}if(!F.pp)return;$("#p-pass").value="";start()};
+$("#refresh").onclick=()=>{msg("Kinukuha…","ok");start()};
+$("#logout").onclick=()=>{F.token="";F.pp="";F.cur=null;save();start()};
 start();
 })();
 </script>
