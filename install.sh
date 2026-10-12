@@ -669,17 +669,19 @@ input:focus,select:focus{border-color:var(--ember)}
 #login{display:none;max-width:780px;margin:0 auto;padding:6px 16px}body.noauth #login{display:block}body.noauth main{display:none}
 #msg{position:fixed;left:12px;right:12px;bottom:calc(84px + env(safe-area-inset-bottom,0));max-width:756px;margin:0 auto;background:#1d2823;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px;display:none;z-index:9}
 #msg.ok{border-color:var(--ok)}#msg.bad{border-color:var(--bad)}
+details.new>summary{display:block;list-style:none;cursor:pointer;text-align:center;margin:8px 0 12px}details.new>summary::-webkit-details-marker,details.pr>summary::-webkit-details-marker{display:none}details.new[open]>summary{background:var(--panel2);color:var(--text);border-color:var(--line)}
+details.pr>summary{list-style:none;cursor:pointer;color:var(--muted);font-size:13px;margin:10px 0}details.pr>summary::after{content:" ▾"}
 @media(min-width:560px){.grid{grid-template-columns:1fr 1fr 1fr}}
 </style>
 </head>
 <body>
-<header><h1>BABAYAGA VPS Panel</h1><p>SSH at Xray accounts sa lahat ng VPS mo.</p><span id="cur">walang napiling VPS</span></header>
+<header><h1>BABAYAGA VPS Panel</h1><span id="cur">walang napiling VPS</span></header>
 <div id="login"><div id="pp" style="display:none"><h2>Passphrase</h2><p class="hint">Ilagay ang passphrase ng listahan ng VPS (isang beses lang sa device na ito).</p><label class="f"><span>Passphrase</span><input type="password" id="p-pass" autocomplete="off"></label><div class="row"><button class="btn pri" id="p-go">Buksan</button></div></div><div id="manual"><h2>Mag-login</h2><p class="hint">Ilagay ang URL at token ng master VPS (isang beses lang). Ang master na ang kokonekta sa lahat ng ibang VPS.</p><label class="f"><span>URL ng master</span><input type="text" id="l-url" placeholder="https://IP-ng-master:8443" autocapitalize="off"></label><label class="f" style="margin-top:10px"><span>Token ng master</span><input type="password" id="l-token" autocomplete="off"></label><div class="row"><button class="btn pri" id="l-go">Pumasok</button></div></div><div id="l-err" class="warn" style="display:none"></div></div>
 <main>
 <section id="t-vps" class="on">
   <h2>Mga VPS</h2>
   <div id="vpsList"></div>
-  <div class="warn">Galing sa GitHub ang listahan ng VPS. Para magdagdag, magbago o mag-alis, gamitin ang <a href="babayaga-admin.html" style="color:var(--ember)">admin page</a>.</div>
+  <p class="hint">Galing sa GitHub ang listahan. Baguhin sa <a href="babayaga-admin.html" style="color:var(--ember)">admin page</a>.</p>
   <div class="row"><button class="btn" id="refresh">I-refresh mula sa GitHub</button><button class="btn dng" id="logout">Logout</button></div>
 </section>
 
@@ -688,31 +690,31 @@ input:focus,select:focus{border-color:var(--ember)}
 </section>
 
 <section id="t-ssh">
-  <h2>Gumawa ng SSH account</h2>
+  <details class="new"><summary class="btn pri">+ Bagong SSH account</summary>
   <div class="grid">
     <label class="f"><span>Username</span><input type="text" id="s-user" autocapitalize="off" autocomplete="off" placeholder="juan"></label>
     <label class="f"><span>Password</span><input type="text" id="s-pass" autocomplete="off"></label>
     <label class="f"><span>Araw</span><input type="number" id="s-days" value="30" min="1"></label>
   </div>
-  <div class="chk" id="s-targets"></div>
-  <div class="row"><button class="btn pri" id="s-create">Gumawa</button><button class="btn" id="s-gen">Gumawa ng password</button></div>
+  <div class="tw"><div class="chk" id="s-targets"></div></div>
+  <div class="row"><button class="btn pri" id="s-create">Gumawa</button><button class="btn" id="s-gen">Random password</button></div>
   <div id="s-result"></div>
-  <h2>Mga SSH account</h2><div id="s-list"></div>
+  </details>
+  <div id="s-list"></div>
 </section>
 
 <section id="t-xr">
-  <h2>Gumawa ng Xray account</h2>
+  <details class="new"><summary class="btn pri">+ Bagong Xray account</summary>
   <div class="grid">
     <label class="f"><span>Username</span><input type="text" id="x-user" autocapitalize="off" autocomplete="off" placeholder="juan"></label>
     <label class="f"><span>Araw</span><input type="number" id="x-days" value="30" min="1"></label>
   </div>
-  <p class="hint">Protocols:</p>
-  <div class="chk" id="x-protos"></div>
-  <p class="hint">Gagawin sa:</p>
-  <div class="chk" id="x-targets"></div>
+  <details class="pr"><summary>Protocols</summary><div class="chk" id="x-protos"></div></details>
+  <div class="tw"><p class="hint">Gagawin sa:</p><div class="chk" id="x-targets"></div></div>
   <div class="row"><button class="btn pri" id="x-create">Gumawa</button></div>
   <div id="x-result"></div>
-  <h2>Mga Xray account</h2><div id="x-list"></div>
+  </details>
+  <div id="x-list"></div>
 </section>
 </main>
 <div id="msg"></div>
@@ -732,6 +734,14 @@ let F={token:"",master:"",pp:"",cur:null}, V=[], INFO={};
 try{const r=localStorage.getItem(KEY);if(r)F=JSON.parse(r)}catch(e){}
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(F))}catch(e){}};
 const cur=()=>V.find(v=>v.id===F.cur);
+const dn=v=>v.id==="local"?"Master":v.name;
+/* each device only sees (and can delete) the accounts it created itself */
+const MK="bby-mine-v1";let MINE={};try{MINE=JSON.parse(localStorage.getItem(MK)||"{}")}catch(e){}
+const vk=v=>v.id==="local"?"local":String(v.url||"").trim().replace(/\/+$/,"").toLowerCase();
+const mine=(v,t)=>((MINE[vk(v)]||{})[t]||[]);
+const mineSave=()=>{try{localStorage.setItem(MK,JSON.stringify(MINE))}catch(e){}};
+const addMine=(v,t,u)=>{const k=vk(v);MINE[k]=MINE[k]||{};const a=MINE[k][t]=MINE[k][t]||[];if(!a.includes(u))a.push(u);mineSave()};
+const delMine=(v,t,u)=>{const k=vk(v);if(MINE[k]&&MINE[k][t]){MINE[k][t]=MINE[k][t].filter(x=>x!==u);mineSave()}};
 function msg(t,k){const m=$("#msg");m.textContent=t;m.className=k||"";m.style.display="block";clearTimeout(msg.t);msg.t=setTimeout(()=>m.style.display="none",4500)}
 async function api(v,path,body){
   const url=(F.master||"").replace(/\/+$/,"")+(v?"/api/v/"+v.id+path.slice(4):path);
@@ -745,7 +755,7 @@ async function api(v,path,body){
 }
 const copy=async t=>{try{await navigator.clipboard.writeText(t);msg("Nakopya na.","ok")}catch(e){msg("Hindi nakopya. Piliin nang manu-mano.","bad")}};
 const days=iso=>Math.ceil((new Date(iso+"T23:59:59")-new Date())/864e5);
-const expChip=iso=>{if(!iso)return `<span class="chip">walang expiry</span>`;const d=days(iso);return `<span class="chip ${d<0?"exp":""}">${d<0?"expired":d+" araw"} · ${esc(iso)}</span>`};
+const expChip=iso=>{if(!iso)return `<span class="chip">walang expiry</span>`;const d=days(iso);return `<span class="chip ${d<0?"exp":""}" title="${esc(iso)}">${d<0?"expired":d+" araw"}</span>`};
 const fmtUp=s=>{const d=Math.floor(s/86400),h=Math.floor(s%86400/3600);return d+"d "+h+"h"};
 
 /* tabs */
@@ -762,12 +772,12 @@ function load(tab){
 }
 
 /* VPS list */
-function head(){$("#cur").textContent=cur()?cur().name:"walang napiling VPS"}
+function head(){$("#cur").textContent=cur()?dn(cur()):"walang napiling VPS"}
 async function loadFleet(){const r=await api(null,"/api/fleet");V=r.vps;if(!cur())F.cur=V[0]?V[0].id:null;save()}
 function renderVps(){
   head();
   $("#vpsList").innerHTML=V.length?V.map(v=>`<div class="card ${v.id===F.cur?"sel":""}"><div class="top"><span class="dot" id="d-${esc(v.id)}"></span>
-    <span class="ttl"><strong>${esc(v.name)}</strong><small>${esc(v.url)}</small></span></div>
+    <span class="ttl"><strong>${esc(dn(v))}</strong><small>${esc(v.url)}</small></span></div>
     <div class="row"><button class="btn sm" data-use="${esc(v.id)}">${v.id===F.cur?"Napili":"Piliin"}</button></div></div>`).join("")
     :`<div class="empty">Wala pang VPS.</div>`;
   V.forEach(v=>api(v,"/api/status").then(()=>{const d=$("#d-"+v.id);if(d)d.className="dot on"}).catch(()=>{const d=$("#d-"+v.id);if(d)d.className="dot bad"}));
@@ -843,7 +853,8 @@ async function info(v){if(!INFO[v.id])INFO[v.id]=await api(v,"/api/status");retu
 
 /* targets */
 function renderTargets(el){
-  el.innerHTML=V.map(v=>`<label><input type="checkbox" value="${v.id}" ${v.id===F.cur?"checked":""}> ${esc(v.name)}</label>`).join("");
+  const w=el.closest(".tw")||el;w.style.display=V.length>1?"":"none";
+  el.innerHTML=V.map(v=>`<label><input type="checkbox" value="${v.id}" ${v.id===F.cur?"checked":""}> ${esc(dn(v))}</label>`).join("");
 }
 const picked=el=>[...el.querySelectorAll("input:checked")].map(i=>V.find(v=>v.id===i.value)).filter(Boolean);
 async function multi(targets,fn){
@@ -858,10 +869,11 @@ async function loadSsh(){
   const v=cur();$("#s-list").innerHTML=`<div class="empty">Kinukuha…</div>`;
   try{
     const r=await api(v,"/api/ssh");
-    $("#s-list").innerHTML=r.users.length?r.users.map(u=>`<div class="card"><div class="top"><span class="dot ${u.sessions?"on":""}"></span>
+    const L=r.users.filter(u=>mine(v,"ssh").includes(u.user));
+    $("#s-list").innerHTML=L.length?L.map(u=>`<div class="card"><div class="top"><span class="dot ${u.sessions?"on":""}"></span>
       <span class="ttl"><strong>${esc(u.user)}</strong><small>${u.sessions} aktibong session</small></span>${expChip(u.exp)}</div>
       <div class="row"><button class="btn sm" data-renew="${esc(u.user)}">Dagdag na araw</button><button class="btn sm dng" data-del="${esc(u.user)}">Burahin</button></div></div>`).join("")
-      :`<div class="empty">Wala pang SSH account.</div>`;
+      :`<div class="empty">Wala ka pang SSH account.</div>`;
   }catch(e){$("#s-list").innerHTML=`<div class="empty">${esc(e.message)}</div>`}
 }
 const rnd=n=>{const c="abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";const a=new Uint32Array(n);crypto.getRandomValues(a);return [...a].map(x=>c[x%c.length]).join("")};
@@ -873,8 +885,9 @@ $("#s-create").onclick=async()=>{
   const res=await multi(t,v=>api(v,"/api/ssh",{user,password:pass,days:d}));
   let html="";
   for(const x of res){
-    if(x.err){html+=`<div class="warn"><b>${esc(x.v.name)}</b>: ${esc(x.err)}</div>`;continue}
+    if(x.err){html+=`<div class="warn"><b>${esc(dn(x.v))}</b>: ${esc(x.err)}</div>`;continue}
     let s={};try{s=await info(x.v)}catch(e){}
+    addMine(x.v,"ssh",user);
     const txt=`BABAYAGA VPN · SSH\nServer: ${s.domain||x.v.url}\nPorts: ${(s.ssh_ports||[]).join(", ")}\nUsername: ${user}\nPassword: ${pass}\nExpires: ${x.r.exp}`;
     html+=`<div class="res">${esc(txt)}</div><div class="row"><button class="btn sm" data-copy="${esc(txt)}">Kopyahin</button></div>`;
   }
@@ -884,7 +897,7 @@ $("#s-list").addEventListener("click",async e=>{
   const b=e.target.closest("button");if(!b)return;const v=cur();
   try{
     if(b.dataset.renew){const d=prompt("Ilang araw ang idadagdag?","30");if(!d)return;const r=await api(v,"/api/ssh/renew",{user:b.dataset.renew,days:+d});msg("Bagong expiry: "+r.exp,"ok");loadSsh()}
-    if(b.dataset.del&&confirm("Burahin ang account na "+b.dataset.del+"?")){await api(v,"/api/ssh/delete",{user:b.dataset.del});msg("Nabura na.","ok");loadSsh()}
+    if(b.dataset.del&&confirm("Burahin ang account na "+b.dataset.del+"?")){await api(v,"/api/ssh/delete",{user:b.dataset.del});delMine(v,"ssh",b.dataset.del);msg("Nabura na.","ok");loadSsh()}
   }catch(er){msg(er.message,"bad")}
 });
 
@@ -901,7 +914,7 @@ function xrCard(dom,u){
   const links=u.entries.map(e=>{const l=makeLinks(dom,u.user,e);const label=(PROTOS.find(p=>p[0]===e.proto)||[0,e.proto])[1];
     return l?`<div class="link"><span>${esc(label)}</span><button class="btn sm" data-copy="${esc(l)}">Kopyahin</button></div>`
             :`<div class="link"><span>${esc(label)} · UUID: ${esc(e.secret)}</span><button class="btn sm" data-copy="${esc(e.secret)}">Kopyahin</button></div>`}).join("");
-  return `<div class="card"><div class="top"><span class="dot on"></span><span class="ttl"><strong>${esc(u.user)}</strong><small>${u.entries.length} protocol</small></span>${expChip(u.exp)}</div>
+  return `<div class="card"><div class="top"><span class="dot on"></span><span class="ttl"><strong>${esc(u.user)}</strong><small>${u.entries.length} protocol · ${esc(u.exp)}</small></span>${expChip(u.exp)}</div>
     <details style="margin-top:8px"><summary class="hint" style="cursor:pointer">Mga link</summary>${links}</details>
     <div class="row"><button class="btn sm" data-renew="${esc(u.user)}">Dagdag na araw</button><button class="btn sm dng" data-del="${esc(u.user)}">Burahin</button></div></div>`;
 }
@@ -911,7 +924,8 @@ async function loadXr(){
   const v=cur();$("#x-list").innerHTML=`<div class="empty">Kinukuha…</div>`;
   try{
     const [r,s]=await Promise.all([api(v,"/api/xray"),info(v)]);
-    $("#x-list").innerHTML=r.users.length?r.users.map(u=>xrCard(s.domain||"DOMAIN",u)).join(""):`<div class="empty">Wala pang Xray account.</div>`;
+    const L=r.users.filter(u=>mine(v,"xr").includes(u.user));
+    $("#x-list").innerHTML=L.length?L.map(u=>xrCard(s.domain||"DOMAIN",u)).join(""):`<div class="empty">Wala ka pang Xray account.</div>`;
   }catch(e){$("#x-list").innerHTML=`<div class="empty">${esc(e.message)}</div>`}
 }
 $("#x-create").onclick=async()=>{
@@ -921,11 +935,12 @@ $("#x-create").onclick=async()=>{
   const res=await multi(t,v=>api(v,"/api/xray",{user,days:d,protos}));
   let html="";
   for(const x of res){
-    if(x.err){html+=`<div class="warn"><b>${esc(x.v.name)}</b>: ${esc(x.err)}</div>`;continue}
+    if(x.err){html+=`<div class="warn"><b>${esc(dn(x.v))}</b>: ${esc(x.err)}</div>`;continue}
     let s={};try{s=await info(x.v)}catch(e){}
+    addMine(x.v,"xr",user);
     const dom=s.domain||"DOMAIN";
     const ls=x.r.protos.map(p=>makeLinks(dom,user,{proto:p,secret:x.r.secret})||("Slipstream UUID: "+x.r.secret));
-    const txt=`BABAYAGA VPN · Xray (${x.v.name})\nUser: ${user}\nExpires: ${x.r.exp}\n\n`+ls.join("\n\n");
+    const txt=`BABAYAGA VPN · Xray (${dn(x.v)})\nUser: ${user}\nExpires: ${x.r.exp}\n\n`+ls.join("\n\n");
     html+=`<div class="res">${esc(txt)}</div><div class="row"><button class="btn sm" data-copy="${esc(txt)}">Kopyahin lahat</button></div>`;
   }
   $("#x-result").innerHTML=html;$("#x-create").disabled=false;loadXr();
@@ -934,7 +949,7 @@ $("#x-list").addEventListener("click",async e=>{
   const b=e.target.closest("button");if(!b||b.dataset.copy)return;const v=cur();
   try{
     if(b.dataset.renew){const d=prompt("Ilang araw ang idadagdag?","30");if(!d)return;const r=await api(v,"/api/xray/renew",{user:b.dataset.renew,days:+d});msg("Bagong expiry: "+r.exp,"ok");loadXr()}
-    if(b.dataset.del&&confirm("Burahin ang "+b.dataset.del+" sa lahat ng Xray protocol? Magre-restart ang Xray sandali.")){await api(v,"/api/xray/delete",{user:b.dataset.del});msg("Nabura na.","ok");loadXr()}
+    if(b.dataset.del&&confirm("Burahin ang "+b.dataset.del+" sa lahat ng Xray protocol? Magre-restart ang Xray sandali.")){await api(v,"/api/xray/delete",{user:b.dataset.del});delMine(v,"xr",b.dataset.del);msg("Nabura na.","ok");loadXr()}
   }catch(er){msg(er.message,"bad")}
 });
 document.addEventListener("click",e=>{const b=e.target.closest("[data-copy]");if(b)copy(b.dataset.copy)});
