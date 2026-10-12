@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="tl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>BABAYAGA Admin</title>
+<style>
+:root{--bg:#0b0e0d;--panel:#121715;--panel2:#171e1b;--line:#243029;--text:#e8e4d8;--muted:#8a9a90;--ember:#ff7a3d;--ember-dim:#3a2217;--ok:#5fd68a;--bad:#ff6b6b;
+--serif:Georgia,'Times New Roman',serif;--sans:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;--mono:ui-monospace,Menlo,Consolas,monospace}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 var(--sans);padding:env(safe-area-inset-top,0) 0 calc(40px + env(safe-area-inset-bottom,0))}
+header,main{max-width:780px;margin:0 auto;padding:0 16px}
+header{padding-top:20px}
+header h1{font:800 24px/1.1 var(--serif);margin:0}
+header p{margin:6px 0 0;color:var(--muted);font-size:13px}
+h2{font:600 18px/1.2 var(--serif);margin:22px 0 10px}
+.hint{color:var(--muted);font-size:13px;margin:6px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.grid .wide{grid-column:1/-1}
+label.f{display:block;font-size:12.5px;color:var(--muted)}label.f>span{display:block;margin-bottom:4px}
+input[type=text],input[type=password]{width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 11px;font:14px var(--mono);outline:none}
+input:focus{border-color:var(--ember)}
+.btn{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 14px;font:500 14px var(--sans)}
+.btn.pri{background:var(--ember);border-color:var(--ember);color:#1a0d05;font-weight:600}
+.btn.dng{color:var(--bad)}.btn.sm{padding:6px 10px;font-size:13px}.btn:disabled{opacity:.5}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin:0 0 10px;padding:12px 14px}
+.warn{background:var(--ember-dim);border:1px solid #5a3321;border-radius:12px;padding:10px 12px;font-size:13px;margin:10px 0}
+.chk{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin:8px 0}.chk input{accent-color:var(--ember)}
+a{color:var(--ember)}
+#msg{position:fixed;left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom,0));max-width:756px;margin:0 auto;background:#1d2823;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px;display:none;z-index:9}
+#msg.ok{border-color:var(--ok)}#msg.bad{border-color:var(--bad)}
+</style>
+</head>
+<body>
+<header><h1>BABAYAGA Admin</h1><p>Dito mo ilalagay ang mga VPS login. Na-e-encrypt ito at nase-save sa GitHub, tapos kusa itong kukunin ng panel.</p></header>
+<main>
+
+<h2>GitHub</h2>
+<div class="grid">
+  <label class="f"><span>Profile name</span><input type="text" id="g-owner" autocapitalize="off" autocomplete="off" placeholder="noelrubio143"></label>
+  <label class="f"><span>Repo name</span><input type="text" id="g-repo" autocapitalize="off" autocomplete="off" placeholder="babayagavpn"></label>
+  <label class="f"><span>File name</span><input type="text" id="g-file" autocapitalize="off" autocomplete="off" value="vps.enc.json"></label>
+  <label class="f"><span>Branch (iwanang blangko = default)</span><input type="text" id="g-branch" autocapitalize="off" autocomplete="off"></label>
+  <label class="f wide"><span>GitHub token</span><input type="password" id="g-token" autocomplete="off"></label>
+  <label class="f wide"><span>Passphrase (pang-encrypt ng file)</span><input type="password" id="g-pass" autocomplete="off"></label>
+</div>
+<label class="chk"><input type="checkbox" id="g-remember"> Tandaan ang token at passphrase sa device na ito</label>
+<p class="hint">GitHub token: gumawa ng <b>fine-grained token</b> para sa repo na ito lang, <b>Contents: Read and write</b>. Ang passphrase ay ilalagay mo rin sa panel nang isang beses sa bawat device. Gumamit ng 12+ na character.</p>
+<div class="row"><button class="btn" id="g-fetch">I-fetch mula sa GitHub</button><button class="btn pri" id="g-save">I-save sa GitHub</button></div>
+
+<h2>Mga VPS</h2>
+<p class="hint">Ang <b>una</b> sa listahan ang master. Dito unang kokonekta ang panel, at ang master na ang kokonekta sa iba.</p>
+<div id="list"></div>
+<div class="row"><button class="btn" id="add">+ Magdagdag ng VPS</button></div>
+<label class="chk"><input type="checkbox" id="showtok"> Ipakita ang mga token</label>
+
+<h2>Export / Import</h2>
+<div class="row">
+  <button class="btn" id="x-enc">I-export (naka-encrypt)</button>
+  <button class="btn" id="x-plain">I-export (plain)</button>
+  <button class="btn" id="x-imp">I-import</button>
+</div>
+<input type="file" id="x-file" accept=".json,application/json" style="display:none">
+<div class="warn">Ang <b>plain</b> export ay hindi naka-encrypt. Nakikita doon ang lahat ng token, kaya itago mo ito at wag i-upload kahit saan.</div>
+
+<p class="hint"><a href="babayaga-vps-panel.html">Buksan ang panel</a></p>
+</main>
+<div id="msg"></div>
+
+<script>
+(function(){
+"use strict";
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const KEY="bby-admin-v1";
+function msg(t,k){const m=$("#msg");m.textContent=t;m.className=k||"";m.style.display="block";clearTimeout(msg.t);msg.t=setTimeout(()=>m.style.display="none",6000)}
+
+/* ---------- crypto (AES-GCM, key from passphrase via PBKDF2) ---------- */
+const b64=u=>{let s="";const a=new Uint8Array(u);for(let i=0;i<a.length;i+=8192)s+=String.fromCharCode.apply(null,a.subarray(i,i+8192));return btoa(s)};
+const ub64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function deriveKey(pass,salt,usage){
+  const km=await crypto.subtle.importKey("raw",new TextEncoder().encode(pass),"PBKDF2",false,["deriveKey"]);
+  return crypto.subtle.deriveKey({name:"PBKDF2",salt,iterations:200000,hash:"SHA-256"},km,{name:"AES-GCM",length:256},false,usage);
+}
+async function enc(obj,pass){
+  const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));
+  const k=await deriveKey(pass,salt,["encrypt"]);
+  const ct=await crypto.subtle.encrypt({name:"AES-GCM",iv},k,new TextEncoder().encode(JSON.stringify(obj)));
+  return {v:1,salt:b64(salt),iv:b64(iv),data:b64(ct)};
+}
+async function dec(f,pass){
+  const k=await deriveKey(pass,ub64(f.salt),["decrypt"]);
+  return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:ub64(f.iv)},k,ub64(f.data))));
+}
+
+/* ---------- state ---------- */
+let S={owner:"",repo:"",file:"vps.enc.json",branch:"",token:"",pass:"",remember:false};
+try{Object.assign(S,JSON.parse(localStorage.getItem(KEY)||"{}"))}catch(e){}
+const m0=location.hostname.match(/^([^.]+)\.github\.io$/i),seg=location.pathname.split("/").filter(Boolean)[0];
+if(!S.owner&&m0)S.owner=m0[1];
+if(!S.repo&&m0&&seg&&!/\.html?$/i.test(seg))S.repo=seg;
+$("#g-owner").value=S.owner;$("#g-repo").value=S.repo;$("#g-file").value=S.file||"vps.enc.json";$("#g-branch").value=S.branch||"";
+$("#g-token").value=S.token||"";$("#g-pass").value=S.pass||"";$("#g-remember").checked=!!S.remember;
+
+function readGh(){
+  S.owner=$("#g-owner").value.trim();S.repo=$("#g-repo").value.trim();S.file=$("#g-file").value.trim()||"vps.enc.json";S.branch=$("#g-branch").value.trim();
+  S.token=$("#g-token").value.trim();S.pass=$("#g-pass").value;S.remember=$("#g-remember").checked;
+  const keep={owner:S.owner,repo:S.repo,file:S.file,branch:S.branch,remember:S.remember};
+  if(S.remember){keep.token=S.token;keep.pass=S.pass}
+  try{localStorage.setItem(KEY,JSON.stringify(keep))}catch(e){}
+}
+
+/* ---------- VPS rows ---------- */
+function rowHtml(v,i){const first=i===0;
+  const t=$("#showtok").checked?"text":"password";
+  return `<div class="card vrow">${first?`<span class="hint" style="color:var(--ember)">MASTER</span>`:""}<div class="grid">
+    <label class="f"><span>Pangalan</span><input type="text" class="r-name" autocomplete="off" value="${esc(v.name)}" placeholder="SG"></label>
+    <label class="f"><span>URL</span><input type="text" class="r-url" autocapitalize="off" autocomplete="off" value="${esc(v.url)}" placeholder="https://IP:8443"></label>
+    <label class="f wide"><span>Token</span><input type="${t}" class="r-token" autocomplete="off" value="${esc(v.token)}"></label>
+  </div><div class="row"><button class="btn sm dng r-del">Alisin</button></div></div>`;
+}
+function renderList(vps){
+  $("#list").innerHTML=vps.length?vps.map((v,i)=>rowHtml(v,i)).join(""):`<div class="hint">Wala pang VPS. Pindutin ang "+ Magdagdag ng VPS".</div>`;
+}
+function readList(){
+  return [...document.querySelectorAll(".vrow")].map(r=>({name:r.querySelector(".r-name").value.trim(),url:r.querySelector(".r-url").value.trim().replace(/\/+$/,""),token:r.querySelector(".r-token").value.trim()}));
+}
+function readCfg(){const l=readList();return {master:l[0]?{name:l[0].name,url:l[0].url,token:l[0].token}:{name:"",url:"",token:""},vps:l.slice(1)}}
+function fillCfg(c){
+  const l=[];
+  if(c.master&&c.master.url)l.push({name:c.master.name||"Master",url:c.master.url,token:c.master.token||""});
+  (Array.isArray(c.vps)?c.vps:[]).forEach(v=>l.push({name:v.name||"",url:v.url||"",token:v.token||""}));
+  renderList(l);
+}
+function validate(c){
+  const all=[c.master].concat(c.vps);
+  if(!c.master.url)return "Magdagdag ng kahit isang VPS. Ang una ang magiging master.";
+  const seen=new Set();
+  for(const [i,v] of all.entries()){
+    const who=i===0?"Master":"VPS #"+i;
+    if(!/^https:\/\/[^\s\/]+$/.test(v.url))return who+": mali ang URL (https://IP:8443).";
+    if(v.token.length<8)return who+": kulang ang token.";
+    const u=v.url.toLowerCase();if(seen.has(u))return who+": doble ang URL.";seen.add(u);
+    if(!v.name)v.name=i===0?"Master":"VPS "+i;
+  }
+  return "";
+}
+$("#add").onclick=()=>{const l=readList();l.push({name:"",url:"",token:""});renderList(l)};
+$("#list").addEventListener("click",e=>{
+  const b=e.target.closest(".r-del");if(!b)return;
+  const rows=[...document.querySelectorAll(".vrow")],i=rows.indexOf(b.closest(".vrow"));
+  const l=readList();l.splice(i,1);renderList(l);
+});
+$("#showtok").onchange=()=>{const t=$("#showtok").checked?"text":"password";document.querySelectorAll(".r-token").forEach(i=>i.type=t)};
+
+/* ---------- GitHub ---------- */
+function ghUrl(){
+  if(!S.owner||!S.repo)throw new Error("Ilagay ang profile name at repo name.");
+  return `https://api.github.com/repos/${encodeURIComponent(S.owner)}/${encodeURIComponent(S.repo)}/contents/${encodeURI(S.file)}`;
+}
+async function ghGet(raw){
+  const h={Accept:raw?"application/vnd.github.raw+json":"application/vnd.github+json"};
+  if(S.token)h.Authorization="Bearer "+S.token;
+  const q=S.branch?"?ref="+encodeURIComponent(S.branch):"";
+  let r;try{r=await fetch(ghUrl()+q,{headers:h,cache:"no-store"})}catch(e){throw new Error("Walang koneksyon sa GitHub.")}
+  if(r.status===404)return null;
+  if(r.status===401||r.status===403)throw new Error("Maling GitHub token o walang permission.");
+  if(!r.ok)throw new Error("GitHub error "+r.status);
+  return raw?r.text():r.json();
+}
+$("#g-fetch").onclick=async()=>{
+  readGh();
+  if(!S.pass)return msg("Ilagay ang passphrase.","bad");
+  $("#g-fetch").disabled=true;
+  try{
+    const t=await ghGet(true);
+    if(t===null)return msg("Wala pang file sa GitHub. Ilagay ang mga VPS mo at i-save.","bad");
+    let f;try{f=JSON.parse(t)}catch(e){throw new Error("Hindi tamang file ang nasa GitHub.")}
+    let c;try{c=await dec(f,S.pass)}catch(e){throw new Error("Maling passphrase.")}
+    fillCfg(c);msg("Na-fetch na ("+((c.vps||[]).length)+" VPS).","ok");
+  }catch(e){msg(e.message,"bad")}finally{$("#g-fetch").disabled=false}
+};
+$("#g-save").onclick=async()=>{
+  readGh();
+  if(!S.token)return msg("Ilagay ang GitHub token.","bad");
+  if(S.pass.length<8)return msg("Passphrase: 8 character pataas (mas mabuti 12+).","bad");
+  const c=readCfg(),bad=validate(c);if(bad)return msg(bad,"bad");
+  $("#g-save").disabled=true;
+  try{
+    fillCfg(c);   /* shows auto-filled names */
+    const cur=await ghGet(false);
+    const body={message:"update vps list",content:btoa(JSON.stringify(await enc(c,S.pass),null,1))};
+    if(cur&&cur.sha)body.sha=cur.sha;
+    if(S.branch)body.branch=S.branch;
+    let r;try{r=await fetch(ghUrl(),{method:"PUT",headers:{Authorization:"Bearer "+S.token,Accept:"application/vnd.github+json","Content-Type":"application/json"},body:JSON.stringify(body)})}catch(e){throw new Error("Walang koneksyon sa GitHub.")}
+    if(r.status===401||r.status===403)throw new Error("Maling GitHub token o walang Contents: Read and write.");
+    if(r.status===404)throw new Error("Hindi makita ang repo. Tingnan ang profile name, repo name, at kung kasama ang repo sa token.");
+    if(r.status===409||r.status===422)throw new Error("Nagbago ang file sa GitHub. I-fetch muna, tapos i-save ulit.");
+    if(!r.ok)throw new Error("GitHub error "+r.status);
+    msg("Na-save na sa GitHub. Sa loob ng ilang segundo makukuha na ito ng panel.","ok");
+  }catch(e){msg(e.message,"bad")}finally{$("#g-save").disabled=false}
+};
+
+/* ---------- export / import ---------- */
+function download(name,text){
+  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([text],{type:"application/json"}));a.download=name;
+  document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},500);
+}
+$("#x-enc").onclick=async()=>{
+  readGh();if(S.pass.length<8)return msg("Ilagay muna ang passphrase (8+).","bad");
+  const c=readCfg(),bad=validate(c);if(bad)return msg(bad,"bad");
+  download("babayaga-vps-export.enc.json",JSON.stringify(await enc(c,S.pass),null,1));msg("Na-export (naka-encrypt).","ok");
+};
+$("#x-plain").onclick=()=>{
+  if(!confirm("Hindi naka-encrypt ang file na ito at nakikita ang lahat ng token. Ituloy?"))return;
+  const c=readCfg();download("babayaga-vps-export.json",JSON.stringify(c,null,1));msg("Na-export (plain). Itago ito nang mabuti.","ok");
+};
+$("#x-imp").onclick=()=>$("#x-file").click();
+$("#x-file").onchange=async e=>{
+  const file=e.target.files[0];e.target.value="";if(!file)return;
+  try{
+    const j=JSON.parse(await file.text());readGh();
+    let c;
+    if(j&&j.data&&j.salt&&j.iv){
+      if(!S.pass)throw new Error("Ilagay muna ang passphrase para ma-decrypt.");
+      try{c=await dec(j,S.pass)}catch(er){throw new Error("Maling passphrase.")}
+    }else if(j&&j.master&&Array.isArray(j.vps)){c=j}
+    else throw new Error("Hindi kilalang format ng file.");
+    fillCfg(c);msg("Na-import. Pindutin ang \"I-save sa GitHub\" para i-save.","ok");
+  }catch(er){msg(er.message,"bad")}
+};
+
+renderList([]);
+})();
+</script>
+</body>
+</html>
