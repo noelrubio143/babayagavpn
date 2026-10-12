@@ -2,7 +2,7 @@
 # BABAYAGA VPS agent installer v3 (Debian/Ubuntu). Run as root:  bash install.sh
 # Run it on EVERY VPS. The VPS list lives in an encrypted file on GitHub (made with babayaga-admin.html);
 # the panel fetches it and the master VPS connects to the others, so the browser trusts only ONE cert.
-# Options (env): PORT=8443  ROTATE=1 (set a new token)  TOKEN=yourtoken (use this token instead of a random one)
+# Options (env): PORT=8443  ROTATE=1 (set a new token)  TOKEN=yourtoken (skip the question and use this token)
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "Run as root."; exit 1; }
 command -v python3 >/dev/null || { echo "python3 is required."; exit 1; }
@@ -1048,6 +1048,10 @@ python3 -m py_compile "$DIR/agent.py"
 
 NEWTOKEN=""
 if [ ! -f "$DIR/agent.json" ] || [ "${ROTATE:-0}" = "1" ]; then
+  # no TOKEN given: ask for one (Enter = random). The token is typed here, never written inside this public file.
+  if [ -z "${TOKEN:-}" ] && (: </dev/tty) 2>/dev/null; then
+    read -r -p "Ilagay ang token (Enter = random): " TOKEN </dev/tty || TOKEN=""
+  fi
   NEWTOKEN="${TOKEN:-$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')}"
   HASH="$(printf %s "$NEWTOKEN" | sha256sum | cut -d' ' -f1)"
   CERT=/etc/xray/xray.crt; KEY=/etc/xray/xray.key
