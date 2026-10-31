@@ -85,16 +85,16 @@
   <h1>BABYYAGA VPN</h1>
   <p class="lead">I-download ang pinakabagong APK para sa Android.</p>
 
-  <a id="dl" class="dl" href="BABYYAGA_VPN.apk" download>
+  <a id="dl" class="dl" href="https://github.com/noelrubio143/babayagavpn/releases/latest">
     <strong>I-download ang APK</strong>
-    <span id="dlsub">Bersyon 1.2.1</span>
+    <span id="dlsub">Kinukuha ang pinakabagong bersyon...</span>
     <i class="bar"></i>
   </a>
 
   <div class="facts">
-    <div><b id="ver">1.2.1</b><small>Bersyon</small></div>
+    <div><b id="ver">...</b><small>Bersyon</small></div>
     <div><b>Android 5.0+</b><small>Kailangan</small></div>
-    <div><b>Libre</b><small>Presyo</small></div>
+    <div><b id="size">...</b><small>Laki ng file</small></div>
   </div>
 
   <h2>Paano mag-install</h2>
@@ -111,17 +111,34 @@
 </main>
 
 <script>
-  // I-edit lang ito kapag may bagong bersyon o ibang APK link.
-  var APK_URL = "BABYYAGA_VPN.apk";   // ilagay ang APK sa tabi ng index.html, o full link
-  var VERSION = "1.2.1";
-
+  // Awtomatikong kinukuha ang pinakabagong APK mula sa GitHub Releases.
+  // Walang kailangang i-edit kapag may bagong release.
+  var REPO = "noelrubio143/babayagavpn";
   var a = document.getElementById("dl");
-  a.href = APK_URL;
-  document.getElementById("ver").textContent = VERSION;
-  document.getElementById("dlsub").textContent = "Bersyon " + VERSION;
+  var sub = document.getElementById("dlsub");
+  var ready = false;
+
+  fetch("https://api.github.com/repos/" + REPO + "/releases/latest", { headers: { "Accept": "application/vnd.github+json" } })
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function (rel) {
+      var apk = (rel.assets || []).filter(function (x) { return /\.apk$/i.test(x.name); })[0];
+      if (!apk) throw new Error("walang APK");
+      a.href = apk.browser_download_url;
+      document.getElementById("ver").textContent = rel.tag_name;
+      document.getElementById("size").textContent = Math.round(apk.size / 1048576) + " MB";
+      sub.textContent = "Bersyon " + rel.tag_name;
+      ready = true;
+    })
+    .catch(function () {
+      sub.textContent = "Hindi ma-load ang bersyon. I-tap para buksan ang releases.";
+      document.getElementById("ver").textContent = "-";
+      document.getElementById("size").textContent = "-";
+    });
+
   a.addEventListener("click", function () {
+    if (!ready) return;
     a.classList.add("go");
-    document.getElementById("dlsub").textContent = "Nagda-download... tingnan ang notification";
+    sub.textContent = "Nagda-download... tingnan ang notification";
   });
 </script>
 </body>
