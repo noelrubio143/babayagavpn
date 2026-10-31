@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="tl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>I-download ang BABYYAGA VPN</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #10222b;
+    --paper: #eef3f0;
+    --card: #ffffff;
+    --line: #cdd9d3;
+    --muted: #54696f;
+    --go: #17936a;
+    --go-ink: #ffffff;
+    --warn: #f1e6c6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e8f1ee;
+      --paper: #0d1a21;
+      --card: #14252e;
+      --line: #264049;
+      --muted: #93a9ae;
+      --go: #2fc08b;
+      --go-ink: #06241a;
+      --warn: #2b2a1d;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    font-family: "Sora", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    line-height: 1.55;
+    padding: 28px 18px 48px;
+  }
+  main { max-width: 460px; margin: 0 auto; }
+  h1 { font-size: 2.1rem; line-height: 1.1; font-weight: 800; margin: 0 0 10px; letter-spacing: -0.02em; }
+  .lead { color: var(--muted); margin: 0 0 26px; }
+
+  .dl {
+    display: block; width: 100%;
+    background: var(--go); color: var(--go-ink);
+    border: 0; border-radius: 26px;
+    padding: 22px 20px 20px;
+    text-align: left; text-decoration: none;
+    font: inherit; cursor: pointer;
+    position: relative; overflow: hidden;
+  }
+  .dl:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+  .dl strong { display: block; font-size: 1.45rem; font-weight: 800; }
+  .dl span { display: block; font-size: .92rem; opacity: .85; margin-top: 2px; }
+  .dl .bar { position: absolute; left: 0; bottom: 0; height: 6px; width: 0; background: var(--go-ink); opacity: .35; }
+  .dl.go .bar { width: 100%; transition: width 2.2s ease-out; }
+
+  .facts { display: flex; gap: 10px; margin: 14px 0 30px; }
+  .facts div { flex: 1; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; }
+  .facts b { display: block; font-size: 1rem; }
+  .facts small { color: var(--muted); font-size: .78rem; }
+
+  h2 { font-size: 1.15rem; margin: 0 0 12px; }
+  ol { list-style: none; margin: 0 0 24px; padding: 0; counter-reset: s; }
+  ol li { counter-increment: s; display: flex; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+  ol li::before {
+    content: counter(s);
+    flex: none; width: 28px; height: 28px; border-radius: 50%;
+    background: var(--ink); color: var(--paper);
+    display: grid; place-items: center; font-weight: 600; font-size: .85rem;
+  }
+  ol li p { margin: 0; }
+  ol li small { display: block; color: var(--muted); }
+
+  .note { background: var(--warn); border-radius: 14px; padding: 12px 14px; font-size: .9rem; margin-bottom: 24px; }
+  .help { color: var(--muted); font-size: .92rem; }
+  .help a { color: var(--ink); font-weight: 600; }
+  @media (prefers-reduced-motion: reduce) { .dl.go .bar { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>BABYYAGA VPN</h1>
+  <p class="lead">I-download ang pinakabagong APK para sa Android.</p>
+
+  <a id="dl" class="dl" href="BABYYAGA_VPN.apk" download>
+    <strong>I-download ang APK</strong>
+    <span id="dlsub">Bersyon 1.2.1</span>
+    <i class="bar"></i>
+  </a>
+
+  <div class="facts">
+    <div><b id="ver">1.2.1</b><small>Bersyon</small></div>
+    <div><b>Android 5.0+</b><small>Kailangan</small></div>
+    <div><b>Libre</b><small>Presyo</small></div>
+  </div>
+
+  <h2>Paano mag-install</h2>
+  <ol>
+    <li><p>I-tap ang <b>I-download ang APK</b> sa taas.<small>Hintayin matapos ang download.</small></p></li>
+    <li><p>Buksan ang na-download na file.<small>Nasa Downloads folder o sa notification ng browser.</small></p></li>
+    <li><p>Kapag may lumabas na babala, i-tap ang <b>Settings</b> at i-on ang <b>Allow from this source</b>.</p></li>
+    <li><p>Bumalik at i-tap ang <b>Install</b>, tapos <b>Open</b>.</p></li>
+  </ol>
+
+  <div class="note">Galing lang sa page na ito o sa opisyal na group ang APK. Huwag mag-install ng kopya mula sa ibang source.</div>
+
+  <p class="help">May problema sa install o connection? Magtanong sa <a href="https://t.me/amberv2ray">Telegram group</a>.</p>
+</main>
+
+<script>
+  // I-edit lang ito kapag may bagong bersyon o ibang APK link.
+  var APK_URL = "BABYYAGA_VPN.apk";   // ilagay ang APK sa tabi ng index.html, o full link
+  var VERSION = "1.2.1";
+
+  var a = document.getElementById("dl");
+  a.href = APK_URL;
+  document.getElementById("ver").textContent = VERSION;
+  document.getElementById("dlsub").textContent = "Bersyon " + VERSION;
+  a.addEventListener("click", function () {
+    a.classList.add("go");
+    document.getElementById("dlsub").textContent = "Nagda-download... tingnan ang notification";
+  });
+</script>
+</body>
+</html>
